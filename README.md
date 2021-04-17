@@ -1,7 +1,7 @@
 NetTalk is free, end-to-end encrypted VoIP + Chat
 -------------------------------------------------
 
-![alt text](https://github.com/ecnx/nettalk/blob/master/screenshot.png?raw=true)
+![alt text](https://raw.githubusercontent.com/ecnx/nettalk/main/screenshot.png)
 
 It's quite easy to setup your own NetTalk server.  
 You will need a VPS or an OpenWRT router with IPv4.  
