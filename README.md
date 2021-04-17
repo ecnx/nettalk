@@ -39,7 +39,7 @@ NetTalk uses following libraries / algorithms:
 * libevent (notifications)
 * gtk3 (user interface)
  
- How to connect with proxy-server via SOCKS-5 proxy, e.g. via Tor?  
+ How to connect with NetTalk proxy-server via SOCKS-5 proxy, e.g. via Tor?  
  ```
  ./nettalk --socks5h 127.0.0.1:9050 conf/test.conf
  ```
