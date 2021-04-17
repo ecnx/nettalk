@@ -1113,7 +1113,7 @@ int window_init ( struct nettalk_context_t *context )
 
     context->gui.reply = gtk_entry_new (  );
     gtk_widget_set_sensitive ( context->gui.reply, FALSE );
-    gtk_entry_set_text ( GTK_ENTRY ( context->gui.reply ), "You're offline..." );
+    gtk_entry_set_text ( GTK_ENTRY ( context->gui.reply ), "Not connected with peer..." );
     set_entry_fontsize ( context->gui.reply, 14 );
     g_signal_connect ( context->gui.reply, "key-release-event", G_CALLBACK ( reply_on_key_press ),
         context );
