@@ -1,0 +1,51 @@
+#!/bin/bash
+if [ "$#" -ne 3 ]; then
+    echo 'usage: gen directory host port'
+    exit 1
+fi
+
+dir="$1"
+host="$2"
+port="$3"
+conf_tmp_a="${dir}/a.conf.tmp"
+conf_tmp_b="${dir}/b.conf.tmp"
+conf_enc_a="${dir}/a.conf"
+conf_enc_b="${dir}/b.conf"
+
+mkdir -p "$dir"
+echo -n 'Create config password: '
+read -r password
+
+channel=$(head -c 16 /dev/random | base64 | tr -d '\r\n' | head -c 16)
+echo "channel: ${channel}"
+openssl genrsa -out /tmp/rsa-priv-a.pem 2048
+openssl rsa -in /tmp/rsa-priv-a.pem -out /tmp/rsa-pub-a.pem -pubout -outform PEM
+openssl genrsa -out /tmp/rsa-priv-b.pem 2048
+openssl rsa -in /tmp/rsa-priv-b.pem -out /tmp/rsa-pub-b.pem -pubout -outform PEM
+
+rsa_priv_a=$(tr '\r\n' ',.' < /tmp/rsa-priv-a.pem)
+rsa_pub_a=$(tr '\r\n' ',.' < /tmp/rsa-pub-a.pem)
+rsa_priv_b=$(tr '\r\n' ',.' < /tmp/rsa-priv-b.pem)
+rsa_pub_b=$(tr '\r\n' ',.' < /tmp/rsa-pub-b.pem)
+
+# 8713
+{ echo "host=${host}";
+  echo "port=${port}";
+  echo "chan=${channel}";
+  echo "self=${rsa_priv_a}";
+  echo "cert=${rsa_pub_a}";
+  echo "peer=${rsa_pub_b}"; } > "$conf_tmp_a"
+
+{ echo "host=${host}";
+  echo "port=${port}";
+  echo "chan=${channel}";
+  echo "self=${rsa_priv_b}";
+  echo "cert=${rsa_pub_b}";
+  echo "peer=${rsa_pub_a}"; } > "$conf_tmp_b"
+
+echo 'encrypting...'
+fxcrypt -e "$password" "$conf_tmp_a" "$conf_enc_a"
+fxcrypt -e "$password" "$conf_tmp_b" "$conf_enc_b"
+
+rm -f /tmp/rsa-priv-a.pem /tmp/rsa-pub-a.pem /tmp/rsa-priv-b.pem /tmp/rsa-pub-b.pem "$conf_tmp_a" "$conf_tmp_b"
+echo 'done!'
