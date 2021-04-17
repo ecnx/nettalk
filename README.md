@@ -19,7 +19,7 @@ To create configs for both users:
 ```
 ./aux/gen conf <server-addr> <server-port>
 ```
-Note: fxcrypt, another project here, is needed to encrypt config  
+_Note: fxcrypt, another project here, is needed to encrypt config_  
 
 Launch NetTalk client:  
 ```
@@ -30,7 +30,7 @@ To setup NetTalk proxy server:
 ```
 ./nettalk-proxy <server-addr> <server-port>
 ```
-Note: nettalk-proxy, another project here, is needed to make it work  
+_Note: nettalk-proxy, another project here, is needed to make it work_  
 
 NetTalk uses following libraries / algorithms:  
 * mbedtls (RSA, AES-GCM, HMAC)
