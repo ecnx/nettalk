@@ -7,12 +7,13 @@
 /**
  * Resolve hostname into IPv4
  */
-static int resolve_ipv4 ( const char *hostname, unsigned int *addr )
+int resolve_ipv4 ( const char *hostname, unsigned int *addr )
 {
+#ifdef SYSTEM_RESOLVER
     struct hostent *he;
     struct in_addr **addr_list;
 
-    /* Try to parse IP address */
+    /* Directly parse address */
     if ( inet_pton ( AF_INET, hostname, addr ) > 0 )
     {
         return 0;
@@ -30,6 +31,7 @@ static int resolve_ipv4 ( const char *hostname, unsigned int *addr )
     /* At least one address required */
     if ( !addr_list[0] )
     {
+        errno = ENODATA;
         return -1;
     }
 
@@ -37,6 +39,16 @@ static int resolve_ipv4 ( const char *hostname, unsigned int *addr )
     *addr = ( *addr_list )[0].s_addr;
 
     return 0;
+#else
+
+    /* Directly parse address */
+    if ( inet_pton ( AF_INET, hostname, addr ) > 0 )
+    {
+        return 0;
+    }
+
+    return nsaddr ( hostname, addr );
+#endif
 }
 
 /**

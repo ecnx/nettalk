@@ -82,11 +82,17 @@ static void nettask_delay ( struct nettalk_context_t *context )
 }
 
 /* Discard old reset events */
-static void nettask_discard_reset ( struct nettalk_context_t *context )
+static int nettask_discard_reset ( struct nettalk_context_t *context )
 {
+    int count = 0;
     unsigned char buffer;
 
-    while ( read ( context->reset_pipe.u.s.readfd, &buffer, sizeof ( buffer ) ) > 0 );
+    while ( read ( context->reset_pipe.u.s.readfd, &buffer, sizeof ( buffer ) ) > 0 )
+    {
+        count++;
+    }
+
+    return count;
 }
 
 /**
@@ -94,16 +100,20 @@ static void nettask_discard_reset ( struct nettalk_context_t *context )
  */
 static void *nettask_entry_point ( void *arg )
 {
+    time_t ts;
     struct nettalk_context_t *context = ( struct nettalk_context_t * ) arg;
 
     for ( ;; )
     {
+        ts = time ( NULL );
         nettask_process ( context );
-        nettask_discard_reset ( context );
-        nettask_process ( context );
-        nettask_discard_reset ( context );
-        nettask_delay ( context );
-        nettask_discard_reset ( context );
+        if ( !nettask_discard_reset ( context ) )
+        {
+            if ( ts + 2 < time ( NULL ) )
+            {
+                nettask_delay ( context );
+            }
+        }
     }
 
     return NULL;

@@ -43,6 +43,7 @@
 #define NETTALK_WAIT_TIMEOUT 30000
 #define FORWARD_CHUNK_LEN 16384
 #define CHAT_HISTORY_NMAX 48
+// #define SYSTEM_RESOLVER
 
 #ifndef UNUSED
 #define UNUSED(x) (void)(x)
@@ -63,5 +64,9 @@
 #endif
 
 #define g_secure_free_string secure_free_string
+
+#ifndef SYSTEM_RESOLVER
+#include "dns.h"
+#endif
 
 #endif

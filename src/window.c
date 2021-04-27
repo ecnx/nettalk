@@ -135,11 +135,6 @@ static GtkTreeModel *create_chattab_model ( void )
 static void show_notification ( struct nettalk_context_t *context, const char *message )
 {
     GError *error = NULL;
-    char *beep_args[] = {
-        "paplay",
-        "/usr/share/sounds/freedesktop/stereo/complete.oga",
-        NULL
-    };
 
     if ( context->notif )
     {
@@ -153,6 +148,18 @@ static void show_notification ( struct nettalk_context_t *context, const char *m
         context->notexp = time ( NULL ) + 15;
         notify_notification_show ( context->notif, NULL );
     }
+}
+
+/**
+ * Play message notification sound
+ */
+static void play_notification_sound ( struct nettalk_context_t *context )
+{
+    char *beep_args[] = {
+        "paplay",
+        "/usr/share/sounds/freedesktop/stereo/complete.oga",
+        NULL
+    };
 
     if ( !( context->notpid = fork (  ) ) )
     {
@@ -355,6 +362,8 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
     struct nettalk_msgbuf_t *msgbuf )
 {
     char c;
+    int exit_flag = FALSE;
+    int msg_done = FALSE;
     int timetag_type;
     ssize_t space;
     size_t nleft;
@@ -372,7 +381,7 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
         timetag_type = -1;
     }
 
-    for ( ;; )
+    while ( !exit_flag )
     {
         if ( msgbuf->len == 0 )
         {
@@ -383,7 +392,8 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
         {
             if ( read ( fd, &c, sizeof ( c ) ) <= 0 )
             {
-                return;
+                exit_flag = TRUE;
+                break;
             }
 
             if ( c == '\n' )
@@ -397,10 +407,7 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
                 {
                     msgbuf->array[space] = '\0';
                     put_message ( context, msgbuf->array );
-                    if ( timetag_type >= 0 )
-                    {
-                        put_timetag ( context, timetag_type );
-                    }
+                    msg_done = TRUE;
                     nleft = msgbuf->len - space;
                     memcpy ( workbuf.array, msgbuf->array + space, nleft );
                     memcpy ( msgbuf->array, workbuf.array, nleft );
@@ -419,10 +426,7 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
         {
             msgbuf->array[msgbuf->len] = '\0';
             put_message ( context, msgbuf->array );
-            if ( timetag_type >= 0 )
-            {
-                put_timetag ( context, timetag_type );
-            }
+            msg_done = TRUE;
             memset ( msgbuf->array, '\0', msgbuf->len );
             msgbuf->len = 0;
         }
@@ -430,7 +434,17 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
         c = '\0';
     }
 
+    if ( msg_done && timetag_type >= 0 )
+    {
+        put_timetag ( context, timetag_type );
+    }
+
     memset ( workbuf.array, '\0', sizeof ( workbuf.array ) );
+
+    if ( type == MESSAGE_TYPE_PEER && msg_done )
+    {
+        play_notification_sound ( context );
+    }
 }
 
 /**
@@ -471,11 +485,107 @@ static void clear_messages ( struct nettalk_context_t *context )
 }
 
 /**
+ * Attempt to decrypt config and connect
+ */
+static void decrypt_config_and_connect ( struct nettalk_context_t *context, const char *password )
+{
+    if ( load_config ( context, context->confpath, password ) < 0 )
+    {
+        gtk_widget_show ( context->gui.autherr );
+        return;
+    }
+
+    if ( gettimeofday ( &context->alarm_timestamp, NULL ) < 0 )
+    {
+        context->alarm_timestamp.tv_sec = 0;
+        context->alarm_timestamp.tv_usec = 0;
+    }
+
+    nettalk_success ( context, "loaded config from file" );
+
+    if ( nettask_launch ( context ) < 0 )
+    {
+        gtk_main_quit (  );
+        return;
+    }
+
+    if ( voice_playback_launch ( context ) < 0 )
+    {
+        gtk_main_quit (  );
+        return;
+    }
+
+    if ( voice_capture_launch ( context ) < 0 )
+    {
+        gtk_main_quit (  );
+        return;
+    }
+
+    gtk_widget_hide ( context->gui.authpanel );
+    gtk_widget_show ( context->gui.talkpanel );
+    gtk_widget_grab_focus ( context->gui.reply );
+    context->complete = TRUE;
+}
+
+/**
+ * Attempt to read password from stdin
+ */
+static char *read_stdin_password ( void )
+{
+    int length;
+    char *password;
+
+    /* Get password length */
+    if ( ioctl ( 0, FIONREAD, &length ) < 0 )
+    {
+        return NULL;
+    }
+
+    /* Check if password was provided */
+    if ( !length )
+    {
+        return NULL;
+    }
+
+    /* Allocate password buffer */
+    if ( !( password = ( char * ) malloc ( length + 1 ) ) )
+    {
+        return NULL;
+    }
+
+    /* Read password from stdin */
+    if ( read ( 0, password, length ) < length )
+    {
+        free ( password );
+        return NULL;
+    }
+
+    /* Trim new lines at the end */
+    while ( length > 1 )
+    {
+        if ( password[length - 1] == '\n' )
+        {
+            length--;
+
+        } else
+        {
+            break;
+        }
+    }
+
+    /* Put string terminator */
+    password[length] = '\0';
+
+    return password;
+}
+
+/**
  * Update window
  */
 static gboolean update_window ( gpointer user_data )
 {
     int status;
+    char *password;
     GError *error = NULL;
     struct nettalk_context_t *context;
     struct timeval now;
@@ -489,6 +599,12 @@ static gboolean update_window ( gpointer user_data )
 
     if ( !context->complete )
     {
+        if ( ( password = read_stdin_password (  ) ) )
+        {
+            decrypt_config_and_connect ( context, password );
+            free ( password );
+        }
+
         return TRUE;
     }
 
@@ -836,64 +952,12 @@ static void menu_about ( GtkMenuItem * menu_item, gpointer user_data )
 }
 
 /**
- * Attempt to decrypt config and connect
- */
-static int decrypt_config_and_connect ( struct nettalk_context_t *context )
-{
-    const gchar *password;
-
-    if ( !( password = gtk_entry_get_text ( GTK_ENTRY ( context->gui.authpass ) ) ) )
-    {
-        return -1;
-    }
-
-    if ( load_config ( context, context->confpath, password ) < 0 )
-    {
-        gtk_widget_show ( context->gui.autherr );
-        return -1;
-    }
-
-    gtk_entry_set_text ( GTK_ENTRY ( context->gui.authpass ), "" );
-
-    if ( gettimeofday ( &context->alarm_timestamp, NULL ) < 0 )
-    {
-        context->alarm_timestamp.tv_sec = 0;
-        context->alarm_timestamp.tv_usec = 0;
-    }
-
-    nettalk_success ( context, "loaded config from file" );
-
-    if ( nettask_launch ( context ) < 0 )
-    {
-        gtk_main_quit (  );
-        return -1;
-    }
-
-    if ( voice_playback_launch ( context ) < 0 )
-    {
-        gtk_main_quit (  );
-        return -1;
-    }
-
-    if ( voice_capture_launch ( context ) < 0 )
-    {
-        gtk_main_quit (  );
-        return -1;
-    }
-
-    gtk_widget_hide ( context->gui.authpanel );
-    gtk_widget_show ( context->gui.talkpanel );
-    gtk_widget_grab_focus ( context->gui.reply );
-    context->complete = TRUE;
-    return 0;
-}
-
-/**
  * Authorization input key down handler
  */
 static gboolean authpass_on_key_press ( GtkWidget * widget, GdkEventKey * event,
     gpointer user_data )
 {
+    const gchar *password;
     struct nettalk_context_t *context;
 
     UNUSED ( widget );
@@ -907,10 +971,11 @@ static gboolean authpass_on_key_press ( GtkWidget * widget, GdkEventKey * event,
 
     if ( event->keyval == 0xff0d )
     {
-        if ( decrypt_config_and_connect ( context ) >= 0 )
+        if ( ( password = gtk_entry_get_text ( GTK_ENTRY ( context->gui.authpass ) ) ) )
         {
-            return TRUE;
+            decrypt_config_and_connect ( context, password );
         }
+        return TRUE;
     }
 
     return FALSE;
@@ -921,6 +986,7 @@ static gboolean authpass_on_key_press ( GtkWidget * widget, GdkEventKey * event,
  */
 static gboolean auth_button_callback ( GtkWidget * widget, gpointer user_data )
 {
+    const char *password;
     struct nettalk_context_t *context;
 
     UNUSED ( widget );
@@ -932,12 +998,12 @@ static gboolean auth_button_callback ( GtkWidget * widget, gpointer user_data )
 
     context = ( struct nettalk_context_t * ) user_data;
 
-    if ( decrypt_config_and_connect ( context ) >= 0 )
+    if ( ( password = gtk_entry_get_text ( GTK_ENTRY ( context->gui.authpass ) ) ) )
     {
-        return TRUE;
+        decrypt_config_and_connect ( context, password );
     }
 
-    return FALSE;
+    return TRUE;
 }
 
 /**
