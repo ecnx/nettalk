@@ -336,9 +336,8 @@ static int nettalk_forward_cycle ( struct nettalk_context_t *context, struct pol
     }
 
     /* Check for error */
-    if ( ( fds[POLL_RESET_PIPE].
-            revents | fds[POLL_NETWORK_SOCKET].revents | fds[POLL_BRIDGE_SOCKET].
-            revents ) & ( POLLERR | POLLHUP ) )
+    if ( ( fds[POLL_RESET_PIPE].revents | fds[POLL_NETWORK_SOCKET].
+            revents | fds[POLL_BRIDGE_SOCKET].revents ) & ( POLLERR | POLLHUP ) )
     {
         return -1;
     }

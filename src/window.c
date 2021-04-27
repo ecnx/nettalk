@@ -320,6 +320,11 @@ static ssize_t find_last_space ( const char *input, size_t len )
 
     for ( i = len - 1; i >= 0; i-- )
     {
+        if ( input[i] == '\n' )
+        {
+            return -1;
+        }
+
         if ( input[i] == ' ' )
         {
             return i;

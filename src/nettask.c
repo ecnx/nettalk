@@ -109,7 +109,7 @@ static void *nettask_entry_point ( void *arg )
         nettask_process ( context );
         if ( !nettask_discard_reset ( context ) )
         {
-            if ( ts + 2 < time ( NULL ) )
+            if ( ts + 2 >= time ( NULL ) )
             {
                 nettask_delay ( context );
             }
