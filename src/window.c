@@ -585,6 +585,39 @@ static char *read_stdin_password ( void )
 }
 
 /**
+ * Get basename from file path
+ */
+static const char *get_basename ( const char *input )
+{
+    const char *result;
+    const char *ptr;
+
+    result = input;
+
+    for ( ptr = input; *ptr; ptr++ )
+    {
+        if ( *ptr == '/' )
+        {
+            result = ptr + 1;
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Update window title
+ */
+static void update_window_title ( struct nettalk_context_t *context )
+{
+    char title[BUFSIZE];
+
+    snprintf ( title, sizeof ( title ), "Net Talk [%s]%s", get_basename ( context->confpath ),
+        context->online ? " online" : "" );
+    gtk_window_set_title ( GTK_WINDOW ( context->gui.window ), title );
+}
+
+/**
  * Update window
  */
 static gboolean update_window ( gpointer user_data )
@@ -680,6 +713,7 @@ static gboolean update_window ( gpointer user_data )
             gtk_entry_set_text ( GTK_ENTRY ( context->gui.reply ), "" );
             gtk_widget_grab_focus ( context->gui.reply );
             context->gui.editable = TRUE;
+            update_window_title ( context );
         }
 
     } else
@@ -689,6 +723,7 @@ static gboolean update_window ( gpointer user_data )
             gtk_widget_set_sensitive ( context->gui.reply, FALSE );
             gtk_entry_set_text ( GTK_ENTRY ( context->gui.reply ), "Not connected with peer..." );
             context->gui.editable = FALSE;
+            update_window_title ( context );
         }
     }
 
@@ -1024,27 +1059,6 @@ static gboolean window_on_deleted ( GtkWidget * widget, GdkEvent * event, gpoint
 }
 
 /**
- * Get basename from file path
- */
-static const char *get_basename ( const char *input )
-{
-    const char *result;
-    const char *ptr;
-
-    result = input;
-
-    for ( ptr = input; *ptr; ptr++ )
-    {
-        if ( *ptr == '/' )
-        {
-            result = ptr + 1;
-        }
-    }
-
-    return result;
-}
-
-/**
  * Initialize application window
  */
 int window_init ( struct nettalk_context_t *context )
@@ -1069,7 +1083,6 @@ int window_init ( struct nettalk_context_t *context )
     GtkWidget *chatbox;
     GtkWidget *replybox;
     GtkWidget *chatscroll;
-    char title[BUFSIZE];
 
     gtk_init ( 0, NULL );
     notify_init ( "cmus-notify" );
@@ -1080,8 +1093,7 @@ int window_init ( struct nettalk_context_t *context )
     context->gui.editable = FALSE;
 
     context->gui.window = gtk_window_new ( GTK_WINDOW_TOPLEVEL );
-    snprintf ( title, sizeof ( title ), "Net Talk [%s]", get_basename ( context->confpath ) );
-    gtk_window_set_title ( GTK_WINDOW ( context->gui.window ), title );
+    update_window_title ( context );
     gtk_widget_set_size_request ( context->gui.window, 450, 700 );
 
     pixbuf = load_program_icon (  );

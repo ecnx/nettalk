@@ -185,10 +185,6 @@ static void capture_fallback ( struct nettalk_context_t *context )
     /* Prepare message chunk buffer */
     memcpy ( buffer, text_chunk, sizeof ( buffer ) );
 
-    /* Prepare poll events */
-    fds[0].fd = context->msgout.u.s.readfd;
-    fds[0].events = POLLERR | POLLHUP | POLLIN;
-
     /* Message forward loop */
     while ( !context->capture_status )
     {
@@ -202,6 +198,10 @@ static void capture_fallback ( struct nettalk_context_t *context )
             }
             context->reset_encoder_peer = 0;
         }
+
+        /* Prepare poll events */
+        fds[0].fd = context->msgout.u.s.readfd;
+        fds[0].events = POLLERR | POLLHUP | POLLIN;
 
         if ( poll ( fds, 1, 100 ) > 0 )
         {

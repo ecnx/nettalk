@@ -24,6 +24,7 @@ OBJS = \
 	bin/nettask.o \
 	bin/window.o \
 	bin/socks5.o \
+	bin/dns.o \
 	bin/program_icon.o
 
 all: host
@@ -66,6 +67,8 @@ internal: prepare icons
 	@$(CC) $(CFLAGS) $(INCLUDES) src/socks5.c -o bin/socks5.o
 	@echo "  CC    lib/fxcrypt.c"
 	@$(CC) $(CFLAGS) $(INCLUDES) lib/fxcrypt.c -o bin/fxcrypt.o
+	@echo "  CC    lib/dns.c"
+	@$(CC) $(CFLAGS) $(INCLUDES) lib/dns.c -o bin/dns.o
 	@echo "  LD    bin/nettalk"
 	@$(LD) -o bin/nettalk $(OBJS) $(LDFLAGS) $(LIBS)
 
