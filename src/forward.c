@@ -18,7 +18,8 @@ enum
 static int encrypt_data ( struct nettalk_context_t *context, size_t len, const uint8_t * src,
     uint8_t * dst )
 {
-    if ( mbedtls_gcm_update ( &context->session.tx_aes, len, src, dst ) != 0 )
+    if ( mbedtls_aes_crypt_cbc ( &context->session.tx_aes, MBEDTLS_AES_ENCRYPT, len,
+            context->session.tx_iv, src, dst ) != 0 )
     {
         return -1;
     }
@@ -32,7 +33,8 @@ static int encrypt_data ( struct nettalk_context_t *context, size_t len, const u
 static int decrypt_data ( struct nettalk_context_t *context, size_t len, const uint8_t * src,
     uint8_t * dst )
 {
-    if ( mbedtls_gcm_update ( &context->session.rx_aes, len, src, dst ) != 0 )
+    if ( mbedtls_aes_crypt_cbc ( &context->session.rx_aes, MBEDTLS_AES_DECRYPT, len,
+            context->session.rx_iv, src, dst ) != 0 )
     {
         return -1;
     }
@@ -320,25 +322,36 @@ static int decrypt_traffic ( struct nettalk_context_t *context, struct pollfd *s
 }
 
 /**
+ * Get current time in milliseconds
+ */
+static long long get_millis ( void )
+{
+    struct timeval tv;
+    if ( gettimeofday ( &tv, NULL ) < 0 )
+    {
+        return 0;
+    }
+    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
+/**
  * Forward data cycle
  */
 static int nettalk_forward_cycle ( struct nettalk_context_t *context, struct pollfd *fds,
     size_t nfds, struct nettalk_ack_t *ack )
 {
     int status;
-    time_t now;
 
     /* Check for abilities */
-    if ( poll ( fds, nfds, 1000 ) < 0 )
+    if ( poll ( fds, nfds, 200 ) < 0 )
     {
-        nettalk_errcode ( context, "E:poll fds failed", errno );
+        nettalk_errcode ( context, "poll fds failed", errno );
         return -1;
     }
 
     /* Check for error */
-    if ( ( fds[POLL_RESET_PIPE].
-            revents | fds[POLL_NETWORK_SOCKET].revents | fds[POLL_BRIDGE_SOCKET].
-            revents ) & ( POLLERR | POLLHUP ) )
+    if ( ( fds[POLL_RESET_PIPE].revents | fds[POLL_NETWORK_SOCKET].
+            revents | fds[POLL_BRIDGE_SOCKET].revents ) & ( POLLERR | POLLHUP ) )
     {
         return -1;
     }
@@ -349,24 +362,12 @@ static int nettalk_forward_cycle ( struct nettalk_context_t *context, struct pol
         return -1;
     }
 
-    /* Get current time */
-    now = time ( NULL );
-
     /* Check for lost connection */
-    if ( ack->decrypted + 6 < now )
+    if ( ack->decrypted + 2000 < get_millis (  ) )
     {
+        nettalk_error ( context, "connection timed out" );
         errno = ETIMEDOUT;
         return -1;
-    }
-
-    /* Reply with noop on idle */
-    if ( ack->encrypted + 2 < now )
-    {
-        if ( send ( context->bridge.u.s.local, noop_chunk, sizeof ( noop_chunk ),
-                MSG_DONTWAIT ) < 0 )
-        {
-            return -1;
-        }
     }
 
     /* Forward data from socket to application */
@@ -379,7 +380,7 @@ static int nettalk_forward_cycle ( struct nettalk_context_t *context, struct pol
     /* Update ACK */
     if ( status > 0 )
     {
-        ack->decrypted = now;
+        ack->decrypted = get_millis (  );
     }
 
     /* Forward data from application to socket */
@@ -392,7 +393,17 @@ static int nettalk_forward_cycle ( struct nettalk_context_t *context, struct pol
     /* Update ACK */
     if ( status > 0 )
     {
-        ack->encrypted = now;
+        ack->encrypted = get_millis (  );
+    }
+
+    /* Reply with noop on idle */
+    if ( ack->encrypted + 200 < get_millis (  ) )
+    {
+        if ( send ( context->bridge.u.s.local, noop_chunk, sizeof ( noop_chunk ),
+                MSG_DONTWAIT ) < 0 )
+        {
+            return -1;
+        }
     }
 
     return 0;
@@ -408,7 +419,7 @@ int nettalk_forward_data ( struct nettalk_context_t *context )
     struct pollfd fds[POLL_FDS_COUNT];
 
     /* Get current time */
-    now = time ( NULL );
+    now = get_millis (  );
     ack.encrypted = now;
     ack.decrypted = now;
 

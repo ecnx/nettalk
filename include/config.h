@@ -27,7 +27,7 @@
 
 #include <fxcrypt.h>
 #include <mbedtls/pk.h>
-#include <mbedtls/gcm.h>
+#include <mbedtls/aes.h>
 #include <libnotify/notify.h>
 
 #define NET_TALK_VERSION "1.01.2"

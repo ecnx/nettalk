@@ -49,18 +49,70 @@ int socket_set_nonblocking ( int sock )
 }
 
 /**
- * Set socket send timeout
+ * Connect socket with timeout
  */
-int socket_set_send_timeout ( int sock, int timeout )
+int connect_timeout ( int sock, struct sockaddr *saddr, size_t saddr_len, int timeout_msec )
 {
-    struct timeval tv;
+    int status = 0;
+    int so_error = 0;
+    long mode = 0;
+    struct pollfd fds[1];
+    socklen_t sock_len = sizeof ( int );
 
-    /* Prepare time value */
-    tv.tv_sec = timeout / 1000;
-    tv.tv_usec = ( timeout - tv.tv_sec * 1000 ) * 1000;
+    if ( ( mode = fcntl ( sock, F_GETFL, 0 ) ) < 0 )
+    {
+        return -1;
+    }
 
-    /* Set socket send timeuot */
-    if ( setsockopt ( sock, SOL_SOCKET, SO_SNDTIMEO, ( const char * ) &tv, sizeof ( tv ) ) < 0 )
+    if ( fcntl ( sock, F_SETFL, mode | O_NONBLOCK ) < 0 )
+    {
+        return -1;
+    }
+
+    if ( ( status = connect ( sock, saddr, saddr_len ) ) >= 0 )
+    {
+        return -1;
+    }
+
+    if ( errno != EINPROGRESS )
+    {
+        return -1;
+    }
+
+    /* Preapre poll fd list */
+    fds[0].fd = sock;
+    fds[0].events = POLLOUT;
+
+    /* Perform poll operation */
+    status = poll ( fds, sizeof ( fds ) / sizeof ( struct pollfd ), timeout_msec );
+
+    if ( status < 0 && errno != EINTR )
+    {
+        return -1;
+
+    } else if ( !status || ~fds[0].revents & POLLOUT )
+    {
+        errno = ETIMEDOUT;
+        return -1;
+    }
+
+    if ( getsockopt ( sock, SOL_SOCKET, SO_ERROR, &so_error, &sock_len ) < 0 )
+    {
+        return -1;
+    }
+
+    if ( so_error )
+    {
+        errno = so_error;
+        return -1;
+    }
+
+    if ( ( mode = fcntl ( sock, F_GETFL, 0 ) ) < 0 )
+    {
+        return -1;
+    }
+
+    if ( fcntl ( sock, F_SETFL, mode & ( ~O_NONBLOCK ) ) < 0 )
     {
         return -1;
     }
@@ -69,54 +121,93 @@ int socket_set_send_timeout ( int sock, int timeout )
 }
 
 /**
- * Unset socket send timeout
+ * Write data chunk to fd with reset event
  */
-int socket_unset_send_timeout ( int sock )
+ssize_t write_with_reset ( struct nettalk_context_t *context, int sock, const void *arr, size_t len,
+    int timeout )
 {
-    return socket_set_send_timeout ( sock, 0 );
+    int status;
+    struct pollfd fds[2];
+
+    /* Prepare poll events */
+    fds[0].fd = sock;
+    fds[0].events = POLLERR | POLLHUP | POLLOUT;
+    fds[1].fd = context->reset_pipe.u.s.readfd;
+    fds[1].events = POLLERR | POLLHUP | POLLIN;
+
+    /* Poll events */
+    if ( ( status = poll ( fds, sizeof ( fds ) / sizeof ( struct pollfd ), timeout ) ) < 0 )
+    {
+        return -1;
+    }
+
+    /* Check for timeout */
+    if ( !status )
+    {
+        errno = ETIMEDOUT;
+        return -1;
+    }
+
+    /* Check for errors */
+    if ( ( fds[0].revents | fds[1].revents ) & ( POLLERR | POLLHUP ) )
+    {
+        return -1;
+    }
+
+    /* Check for reset event */
+    if ( ( ~fds[0].revents & POLLOUT ) || ( fds[1].revents & POLLIN ) )
+    {
+        errno = EINTR;
+        return -1;
+    }
+
+    /* Send data chunk */
+    return write ( sock, arr, len );
 }
 
 /**
- * Send complete data via socket
+ * Read data chunk from fd with reset event
  */
-int send_complete ( int sock, const void *arr, size_t len )
+ssize_t read_with_reset ( struct nettalk_context_t *context, int sock, void *arr, size_t len,
+    int timeout )
 {
-    size_t ret;
-    size_t sum;
+    int status;
+    struct pollfd fds[2];
 
-    for ( sum = 0; sum < len; sum += ret )
+    /* Prepare poll events */
+    fds[0].fd = sock;
+    fds[0].events = POLLERR | POLLHUP | POLLIN;
+    fds[1].fd = context->reset_pipe.u.s.readfd;
+    fds[1].events = POLLERR | POLLHUP | POLLIN;
+
+    /* Poll events */
+    if ( ( status = poll ( fds, sizeof ( fds ) / sizeof ( struct pollfd ), timeout ) ) < 0 )
     {
-        if ( ( ssize_t ) ( ret =
-                send ( sock, ( const unsigned char * ) arr + sum, len - sum, MSG_NOSIGNAL ) ) < 0 )
-        {
-            return -1;
-        }
+        return -1;
     }
 
-    return 0;
-}
-
-/**
- * Receive complete data via socket
- */
-int recv_complete ( int sock, void *arr, size_t len )
-{
-    size_t ret;
-    size_t sum;
-
-    for ( sum = 0; sum < len; sum += ret )
+    /* Check for timeout */
+    if ( !status )
     {
-        if ( ( ssize_t ) ( ret = recv ( sock, ( unsigned char * ) arr + sum, len - sum, 0 ) ) <= 0 )
-        {
-            if ( !ret )
-            {
-                errno = EPIPE;
-            }
-            return -1;
-        }
+        errno = ETIMEDOUT;
+        return -1;
     }
 
-    return 0;
+    /* Check for errors */
+    if ( ( fds[0].revents | fds[1].revents ) & ( POLLERR | POLLHUP ) )
+    {
+        return -1;
+    }
+
+    /* Check for reset event */
+    if ( ( ~fds[0].revents & POLLIN ) || ( fds[1].revents & POLLIN ) )
+    {
+        errno = EINTR;
+        return -1;
+    }
+
+    /* Receive data chunk */
+    return read ( sock, arr, len );
 }
 
 /**
@@ -207,6 +298,54 @@ ssize_t recv_with_reset ( struct nettalk_context_t *context, int sock, void *arr
 
     /* Receive data chunk */
     return recv ( sock, arr, len, 0 );
+}
+
+/**
+ * Write complete data to fd with reset event
+ */
+int write_complete_with_reset ( struct nettalk_context_t *context, int sock, const void *arr,
+    size_t len, int timeout )
+{
+    size_t ret;
+    size_t sum;
+
+    for ( sum = 0; sum < len; sum += ret )
+    {
+        if ( ( ssize_t ) ( ret =
+                write_with_reset ( context, sock, ( const unsigned char * ) arr + sum,
+                    len - sum, timeout ) ) < 0 )
+        {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * Read complete data from fd with reset event
+ */
+int read_complete_with_reset ( struct nettalk_context_t *context, int sock, void *arr, size_t len,
+    int timeout )
+{
+    size_t ret;
+    size_t sum;
+
+    for ( sum = 0; sum < len; sum += ret )
+    {
+        if ( ( ssize_t ) ( ret =
+                read_with_reset ( context, sock, ( unsigned char * ) arr + sum, len - sum,
+                    timeout ) ) <= 0 )
+        {
+            if ( !ret )
+            {
+                errno = EPIPE;
+            }
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 /**
@@ -389,5 +528,15 @@ const uint8_t text_chunk[AMRNB_CHUNK_MAX] = {
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+/**
+ * Text ACK chunk
+ */
+const uint8_t ack_chunk[AMRNB_CHUNK_MAX] = {
+    0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+    0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+    0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };

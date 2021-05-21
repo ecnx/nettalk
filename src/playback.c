@@ -165,8 +165,9 @@ static int audioplay_start ( struct nettalk_context_t *context, struct audio_spe
     fds[0].events = POLLERR | POLLHUP | POLLIN;
 
     /* Forward PCM data loop */
-    while ( context->playback_status )
+    while ( context->playback_status && !session_would_reconnect ( context ) )
     {
+
         if ( done == nframes )
         {
             if ( poll ( fds, 1, 100 ) > 0 )
@@ -253,33 +254,17 @@ static void playback_fallback ( struct nettalk_context_t *context )
     ssize_t len;
     size_t input_pos;
     size_t input_len = 0;
-    struct pollfd fds[1];
     unsigned char left[AMRNB_CHUNK_MAX];
     unsigned char input[4096];
 
     /* Message forward loop */
-    while ( !context->playback_status )
+    while ( !context->playback_status && !session_would_reconnect ( context ) )
     {
-        /* Prepare poll events */
-        fds[0].fd = context->bridge.u.s.local;
-        fds[0].events = POLLERR | POLLHUP | POLLIN;
-
-        /* Poll events */
-        if ( poll ( fds, 1, 100 ) > 0 )
+        /* Receive input data */
+        if ( ( len =
+                recv_with_reset ( context, context->bridge.u.s.local, input + input_len,
+                    sizeof ( input ) - input_len, 100 ) ) > 0 )
         {
-            if ( fds[0].revents & ( POLLERR | POLLHUP ) )
-            {
-                break;
-            }
-
-            /* Receive input data */
-            if ( ( len =
-                    recv_with_reset ( context, context->bridge.u.s.local, input + input_len,
-                        sizeof ( input ) - input_len, -1 ) ) <= 0 )
-            {
-                break;
-            }
-
             input_len += len;
 
             /* At least max size of AMR-NB chunk required */
@@ -302,12 +287,29 @@ static void playback_fallback ( struct nettalk_context_t *context )
 
                 } else if ( !memcmp ( input + input_pos, text_chunk, 24 ) )
                 {
+                    len = AMRNB_CHUNK_MAX;
+
                     if ( write ( context->msgin.u.s.writefd, input + input_pos + 24,
-                            AMRNB_CHUNK_MAX - 24 ) < 0 )
+                            len - 24 ) < 0 )
                     {
                     }
 
+                    memcpy ( input + input_pos, ack_chunk, 24 );
+
+                    if ( send_complete_with_reset ( context, context->bridge.u.s.local,
+                            input + input_pos, len, NETTALK_SEND_TIMEOUT ) < 0 )
+                    {
+                        break;
+                    }
+
+                } else if ( !memcmp ( input + input_pos, ack_chunk, 24 ) )
+                {
                     len = AMRNB_CHUNK_MAX;
+
+                    if ( write ( context->msgloop.u.s.writefd, input + input_pos + 24,
+                            len - 24 ) < 0 )
+                    {
+                    }
 
                 } else
                 {
@@ -326,6 +328,10 @@ static void playback_fallback ( struct nettalk_context_t *context )
                 memcpy ( input, left, len );
             }
             input_len = len;
+
+        } else if ( errno != ETIMEDOUT )
+        {
+            break;
         }
     }
 }
@@ -358,10 +364,13 @@ static void voiceplay_cycle ( struct nettalk_context_t *context )
 
     if ( audioplay_start ( context, &speaker ) < 0 )
     {
-        nettalk_info ( context, "audio output not available" );
-        context->playback_status = FALSE;
-        gettimeofdayv ( &context->playback_status_timestamp );
-        playback_fallback ( context );
+        if ( !session_would_reconnect ( context ) )
+        {
+            nettalk_info ( context, "audio output not available" );
+            context->playback_status = FALSE;
+            gettimeofdayv ( &context->playback_status_timestamp );
+            playback_fallback ( context );
+        }
     }
 }
 
@@ -375,6 +384,10 @@ static void *voice_playback_entry ( void *arg )
     for ( ;; )
     {
         voiceplay_cycle ( context );
+        if ( session_would_reconnect ( context ) )
+        {
+            break;
+        }
         sleep ( 1 );
     }
 
@@ -384,12 +397,10 @@ static void *voice_playback_entry ( void *arg )
 /**
  * Voice Playback Task
  */
-int voice_playback_launch ( struct nettalk_context_t *context )
+int voice_playback_launch ( struct nettalk_context_t *context, pthread_t * pthread )
 {
-    long pref;
-
     /* Start scanner task asynchronously */
-    if ( pthread_create ( ( pthread_t * ) & pref, NULL, voice_playback_entry, context ) != 0 )
+    if ( pthread_create ( pthread, NULL, voice_playback_entry, context ) != 0 )
     {
         return -1;
     }

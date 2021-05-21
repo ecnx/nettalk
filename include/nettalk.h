@@ -78,8 +78,8 @@ struct socket_pair_t
  */
 struct nettalk_ack_t
 {
-    time_t encrypted;
-    time_t decrypted;
+    long long encrypted;
+    long long decrypted;
 };
 
 /**
@@ -112,10 +112,10 @@ struct nettalk_session_t
 {
     int sock;
     int sndbuf;
-    mbedtls_gcm_context tx_aes;
-    mbedtls_gcm_context rx_aes;
-    uint8_t tx_nonce[AES256_KEYLEN];
-    uint8_t rx_nonce[AES256_KEYLEN];
+    mbedtls_aes_context tx_aes;
+    mbedtls_aes_context rx_aes;
+    uint8_t tx_iv[AES256_BLOCKLEN];
+    uint8_t rx_iv[AES256_BLOCKLEN];
     size_t tx_nleft;
     uint8_t tx_left[FORWARD_CHUNK_LEN];
     size_t rx_nleft;
@@ -154,6 +154,7 @@ struct nettalk_gui_t
 struct nettalk_context_t
 {
     int complete;
+    int verbose;
     volatile int online;
     int nmessages;
     int notena;
@@ -188,6 +189,7 @@ struct nettalk_context_t
     volatile struct timeval playback_preset_timestamp;
     volatile int reset_encoder_self;
     volatile int reset_encoder_peer;
+    time_t msg_timeouts[CHAT_HISTORY_NMAX];
 };
 
 /**
@@ -222,24 +224,21 @@ extern int socket_set_blocking ( int sock );
 extern int socket_set_nonblocking ( int sock );
 
 /**
- * Set socket send timeout
+ * Connect socket with timeout
  */
-extern int socket_set_send_timeout ( int sock, int timeout );
+extern int connect_timeout ( int sock, struct sockaddr *saddr, size_t saddr_len, int timeout_msec );
 
 /**
- * Unset socket send timeout
+ * Write data chunk to fd with reset event
  */
-extern int socket_unset_send_timeout ( int sock );
+extern ssize_t write_with_reset ( struct nettalk_context_t *context, int sock, const void *arr,
+    size_t len, int timeout );
 
 /**
- * Send complete data via socket
+ * Read data chunk from fd with reset event
  */
-extern int send_complete ( int sock, const void *arr, size_t len );
-
-/**
- * Receive complete data via socket
- */
-extern int recv_complete ( int sock, void *arr, size_t len );
+extern ssize_t read_with_reset ( struct nettalk_context_t *context, int sock, void *arr, size_t len,
+    int timeout );
 
 /**
  * Send data chunk via socket with reset event
@@ -250,7 +249,19 @@ extern ssize_t send_with_reset ( struct nettalk_context_t *context, int sock, co
 /**
  * Receive data chunk via socket with reset event
  */
-extern ssize_t recv_with_reset ( struct nettalk_context_t *context, int sock, void *arr,
+extern ssize_t recv_with_reset ( struct nettalk_context_t *context, int sock, void *arr, size_t len,
+    int timeout );
+
+/**
+ * Write complete data to fd with reset event
+ */
+extern int write_complete_with_reset ( struct nettalk_context_t *context, int sock, const void *arr,
+    size_t len, int timeout );
+
+/**
+ * Read complete data from fd with reset event
+ */
+extern int read_complete_with_reset ( struct nettalk_context_t *context, int sock, void *arr,
     size_t len, int timeout );
 
 /**
@@ -321,6 +332,11 @@ extern const uint8_t noop_chunk[AMRNB_CHUNK_MAX];
 extern const uint8_t text_chunk[AMRNB_CHUNK_MAX];
 
 /**
+ * Text ACK chunk
+ */
+extern const uint8_t ack_chunk[AMRNB_CHUNK_MAX];
+
+/**
  * Connect with remote peer
  */
 extern int nettalk_connect ( struct nettalk_context_t *context );
@@ -341,12 +357,43 @@ extern int nettalk_forward_data ( struct nettalk_context_t *context );
 extern int nettask_launch ( struct nettalk_context_t *context );
 
 /**
+ * Reconnect the session
+ */
+extern void reconnect_session ( struct nettalk_context_t *context );
+
+/**
+ * Check if session reconnect is in progress
+ */
+extern int session_would_reconnect ( struct nettalk_context_t *context );
+
+/**
  * Initialize application window
  */
 extern int window_init ( struct nettalk_context_t *context );
 
 /**
- * Log information message
+ * Voice Capture Task
+ */
+extern int voice_capture_launch ( struct nettalk_context_t *context, pthread_t * pthread );
+
+/**
+ * Voice Playback Task
+ */
+extern int voice_playback_launch ( struct nettalk_context_t *context, pthread_t * pthread );
+
+/*
+ * Perform Socks5 handshake
+ */
+extern int socks5_handshake ( struct nettalk_context_t *context, int sock );
+
+/**
+ * Request new Socks5 connection
+ */
+extern int socks5_request_hostname ( struct nettalk_context_t *context, int sock,
+    const char *hostname, unsigned short port );
+
+/**
+ * Log info message
  */
 extern void nettalk_info ( struct nettalk_context_t *context, const char *format, ... );
 
@@ -361,29 +408,8 @@ extern void nettalk_success ( struct nettalk_context_t *context, const char *for
 extern void nettalk_error ( struct nettalk_context_t *context, const char *format, ... );
 
 /**
- * Log error with code message
+ * Log error message with code
  */
-extern void nettalk_errcode ( struct nettalk_context_t *context, const char *message, int code );
-
-/**
- * Voice Capture Task
- */
-extern int voice_capture_launch ( struct nettalk_context_t *context );
-
-/**
- * Voice Playback Task
- */
-extern int voice_playback_launch ( struct nettalk_context_t *context );
-
-/*
- * Perform Socks5 handshake
- */
-extern int socks5_handshake ( struct nettalk_context_t *context, int sock );
-
-/**
- * Request new Socks5 connection
- */
-extern int socks5_request_hostname ( struct nettalk_context_t *context, int sock,
-    const char *hostname, unsigned short port );
+extern void nettalk_errcode ( struct nettalk_context_t *context, const char *message, int errcode );
 
 #endif

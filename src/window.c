@@ -197,6 +197,64 @@ static GtkWidget *create_chattab ( void )
 }
 
 /**
+ * Append message timestamp to array
+ */
+static void append_message_timestamp ( struct nettalk_context_t *context, time_t time )
+{
+    size_t i;
+
+    for ( i = sizeof ( context->msg_timeouts ) / sizeof ( time_t ) - 1; i > 0; i-- )
+    {
+        context->msg_timeouts[i] = context->msg_timeouts[i - 1];
+    }
+
+    context->msg_timeouts[0] = time;
+}
+
+/**
+ * Remove oldest message
+ */
+static void remove_oldest_message ( struct nettalk_context_t *context )
+{
+    GtkTreeModel *model;
+    GtkListStore *store;
+    GtkTreePath *path;
+    GtkTreeIter iter;
+
+    model = gtk_tree_view_get_model ( GTK_TREE_VIEW ( context->gui.chat ) );
+    store = GTK_LIST_STORE ( model );
+
+    path = gtk_tree_path_new_from_indices ( 0, -1 );
+    if ( gtk_tree_model_get_iter ( model, &iter, path ) )
+    {
+        gtk_list_store_remove ( store, &iter );
+        context->nmessages--;
+    }
+}
+
+/**
+ * Cleanup timed out messages
+ */
+static void cleanup_messages ( struct nettalk_context_t *context )
+{
+    size_t i;
+    time_t ts;
+    time_t now;
+
+    now = time ( NULL );
+
+    for ( i = 0; i < sizeof ( context->msg_timeouts ) / sizeof ( time_t ); i++ )
+    {
+        ts = context->msg_timeouts[i];
+        if ( ts && ts + 900 < now )
+        {
+            context->msg_timeouts[i] = 0;
+            remove_oldest_message ( context );
+        }
+    }
+}
+
+/**
  * Append message to chat table
  */
 static void put_message ( struct nettalk_context_t *context, const char *message )
@@ -205,18 +263,16 @@ static void put_message ( struct nettalk_context_t *context, const char *message
     GtkListStore *store;
     GtkTreePath *path;
     GtkTreeIter iter;
+
     model = gtk_tree_view_get_model ( GTK_TREE_VIEW ( context->gui.chat ) );
     store = GTK_LIST_STORE ( model );
 
     if ( context->nmessages > CHAT_HISTORY_NMAX )
     {
-        path = gtk_tree_path_new_from_indices ( 0, -1 );
-        if ( gtk_tree_model_get_iter ( model, &iter, path ) )
-        {
-            gtk_list_store_remove ( store, &iter );
-            context->nmessages--;
-        }
+        remove_oldest_message ( context );
     }
+
+    append_message_timestamp ( context, time ( NULL ) );
 
     gtk_list_store_append ( store, &iter );
     gtk_list_store_set ( store, &iter, TABLE_CHAT_COLUMN, message, -1 );
@@ -487,6 +543,7 @@ static void clear_messages ( struct nettalk_context_t *context )
     gtk_list_store_clear ( store );
     gtk_tree_view_columns_autosize ( GTK_TREE_VIEW ( context->gui.chat ) );
     context->nmessages = 0;
+    memset ( &context->msg_timeouts, '\0', sizeof ( context->msg_timeouts ) );
 }
 
 /**
@@ -509,18 +566,6 @@ static void decrypt_config_and_connect ( struct nettalk_context_t *context, cons
     nettalk_success ( context, "loaded config from file" );
 
     if ( nettask_launch ( context ) < 0 )
-    {
-        gtk_main_quit (  );
-        return;
-    }
-
-    if ( voice_playback_launch ( context ) < 0 )
-    {
-        gtk_main_quit (  );
-        return;
-    }
-
-    if ( voice_capture_launch ( context ) < 0 )
     {
         gtk_main_quit (  );
         return;
@@ -737,6 +782,8 @@ static gboolean update_window ( gpointer user_data )
         context->alarm_timestamp.tv_usec = now.tv_usec;
     }
 
+    cleanup_messages ( context );
+
     return TRUE;
 }
 
@@ -819,11 +866,24 @@ static void add_menu_item ( struct nettalk_context_t *context, GtkWidget * subme
 }
 
 /**
+ * Add new check item to menu bar
+ */
+static void add_menu_check_item ( struct nettalk_context_t *context, GtkWidget * submenu,
+    const char *name, GCallback callback, GtkAccelGroup * accel_group, gint shortcut, gint mask )
+{
+    GtkWidget *menu_item;
+    menu_item = gtk_check_menu_item_new_with_label ( name );
+    g_signal_connect ( menu_item, "activate", callback, context );
+    gtk_widget_add_accelerator ( menu_item, "activate", accel_group, shortcut, mask,
+        GTK_ACCEL_VISIBLE );
+    gtk_menu_shell_append ( GTK_MENU_SHELL ( submenu ), menu_item );
+}
+
+/**
  * File Reconnect menu handler
  */
 static void menu_reconnect ( GtkMenuItem * menu_item, gpointer user_data )
 {
-    int newline = '\n';
     struct nettalk_context_t *context;
 
     UNUSED ( menu_item );
@@ -837,9 +897,7 @@ static void menu_reconnect ( GtkMenuItem * menu_item, gpointer user_data )
             return;
         }
 
-        if ( write ( context->reset_pipe.u.s.writefd, &newline, sizeof ( newline ) ) >= 0 )
-        {
-        }
+        reconnect_session ( context );
     }
 }
 
@@ -872,6 +930,22 @@ static void menu_clear ( GtkMenuItem * menu_item, gpointer user_data )
         }
 
         clear_messages ( context );
+    }
+}
+
+/**
+ * Toggle verbose mode menu handler
+ */
+static void menu_verbose_mode ( GtkMenuItem * menu_item, gpointer user_data )
+{
+    struct nettalk_context_t *context;
+
+    UNUSED ( menu_item );
+
+    if ( user_data )
+    {
+        context = ( struct nettalk_context_t * ) user_data;
+        context->verbose = !context->verbose;
     }
 }
 
@@ -1145,6 +1219,9 @@ int window_init ( struct nettalk_context_t *context )
 
     add_menu_item ( context, edit_submenu, "Clear Messages", G_CALLBACK ( menu_clear ),
         accel_group, GDK_F5, 0 );
+
+    add_menu_check_item ( context, edit_submenu, "Verbose Mode", G_CALLBACK ( menu_verbose_mode ),
+        accel_group, GDK_F6, 0 );
 
     add_menu_item ( context, edit_submenu, "Copy Message", G_CALLBACK ( menu_copy ),
         accel_group, GDK_c, GDK_CONTROL_MASK | GDK_SHIFT_MASK );

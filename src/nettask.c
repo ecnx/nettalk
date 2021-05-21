@@ -10,9 +10,14 @@
 static void nettask_process ( struct nettalk_context_t *context )
 {
     int err = FALSE;
+    pthread_t playback_thread;
+    pthread_t capture_thread;
 
     if ( socketpair ( AF_UNIX, SOCK_STREAM, 0, context->bridge.u.fds ) < 0 )
     {
+        pipe_close ( &context->msgin );
+        pipe_close ( &context->msgout );
+        pipe_close ( &context->msgloop );
         return;
     }
 
@@ -38,6 +43,24 @@ static void nettask_process ( struct nettalk_context_t *context )
         return;
     }
 
+    if ( voice_playback_launch ( context, &playback_thread ) < 0 )
+    {
+        shutdown_then_close ( context->bridge.u.s.local );
+        shutdown_then_close ( context->bridge.u.s.remote );
+        shutdown_then_close ( context->session.sock );
+        return;
+    }
+
+    if ( voice_capture_launch ( context, &capture_thread ) < 0 )
+    {
+        reconnect_session ( context );
+        pthread_join ( playback_thread, NULL );
+        shutdown_then_close ( context->bridge.u.s.local );
+        shutdown_then_close ( context->bridge.u.s.remote );
+        shutdown_then_close ( context->session.sock );
+        return;
+    }
+
     context->online = TRUE;
 
     if ( nettalk_forward_data ( context ) < 0 )
@@ -46,14 +69,16 @@ static void nettask_process ( struct nettalk_context_t *context )
     }
 
     context->online = FALSE;
-
+    reconnect_session ( context );
+    pthread_join ( playback_thread, NULL );
+    pthread_join ( capture_thread, NULL );
     shutdown_then_close ( context->bridge.u.s.local );
     shutdown_then_close ( context->bridge.u.s.remote );
     shutdown_then_close ( context->session.sock );
     memset ( context->session.tx_left, '\0', sizeof ( context->session.tx_left ) );
     memset ( context->session.rx_left, '\0', sizeof ( context->session.rx_left ) );
-    mbedtls_gcm_free ( &context->session.tx_aes );
-    mbedtls_gcm_free ( &context->session.rx_aes );
+    mbedtls_aes_free ( &context->session.tx_aes );
+    mbedtls_aes_free ( &context->session.rx_aes );
 
     if ( !err )
     {
@@ -85,9 +110,9 @@ static void nettask_delay ( struct nettalk_context_t *context )
 static int nettask_discard_reset ( struct nettalk_context_t *context )
 {
     int count = 0;
-    unsigned char buffer;
+    uint8_t byte;
 
-    while ( read ( context->reset_pipe.u.s.readfd, &buffer, sizeof ( buffer ) ) > 0 )
+    while ( read ( context->reset_pipe.u.s.readfd, &byte, sizeof ( byte ) ) > 0 )
     {
         count++;
     }
@@ -133,4 +158,31 @@ int nettask_launch ( struct nettalk_context_t *context )
     }
 
     return 0;
+}
+
+/**
+ * Reconnect the session
+ */
+void reconnect_session ( struct nettalk_context_t *context )
+{
+    uint8_t byte = '\n';
+
+    if ( write ( context->reset_pipe.u.s.writefd, &byte, sizeof ( byte ) ) >= 0 )
+    {
+    }
+}
+
+/**
+ * Check if session reconnect is in progress
+ */
+int session_would_reconnect ( struct nettalk_context_t *context )
+{
+    int available;
+
+    if ( ioctl ( context->reset_pipe.u.s.readfd, FIONREAD, &available ) < 0 )
+    {
+        return TRUE;
+    }
+
+    return !!available;
 }

@@ -32,20 +32,33 @@ static int nettalk_init ( struct nettalk_context_t *context )
     context->notexp = 0;
     context->notif = NULL;
 
+    if ( pipe_new_nonblocking ( &context->reset_pipe ) < 0 )
+    {
+        return -1;
+    }
+
+    if ( socket_set_nonblocking ( context->reset_pipe.u.s.readfd ) < 0 )
+    {
+        pipe_close ( &context->reset_pipe );
+        return -1;
+    }
+
     if ( pipe_new_nonblocking ( &context->msgin ) < 0 )
     {
+        pipe_close ( &context->reset_pipe );
         return -1;
     }
 
     if ( pipe_new_nonblocking ( &context->msgout ) < 0 )
     {
+        pipe_close ( &context->reset_pipe );
         pipe_close ( &context->msgin );
-        pipe_close ( &context->msgout );
         return -1;
     }
 
     if ( pipe_new_nonblocking ( &context->msgloop ) < 0 )
     {
+        pipe_close ( &context->reset_pipe );
         pipe_close ( &context->msgin );
         pipe_close ( &context->msgout );
         return -1;
@@ -53,38 +66,20 @@ static int nettalk_init ( struct nettalk_context_t *context )
 
     if ( pipe_new_nonblocking ( &context->applog ) < 0 )
     {
-        pipe_close ( &context->msgin );
-        pipe_close ( &context->msgout );
-        pipe_close ( &context->msgloop );
-        return -1;
-    }
-
-    if ( pipe_new_nonblocking ( &context->reset_pipe ) < 0 )
-    {
-        pipe_close ( &context->msgin );
-        pipe_close ( &context->msgout );
-        pipe_close ( &context->msgloop );
-        pipe_close ( &context->applog );
-        return -1;
-    }
-
-    if ( socket_set_nonblocking ( context->reset_pipe.u.s.readfd ) < 0 )
-    {
-        pipe_close ( &context->msgin );
-        pipe_close ( &context->msgout );
-        pipe_close ( &context->msgloop );
-        pipe_close ( &context->applog );
         pipe_close ( &context->reset_pipe );
+        pipe_close ( &context->msgin );
+        pipe_close ( &context->msgout );
+        pipe_close ( &context->msgloop );
         return -1;
     }
 
     if ( nettalk_random_init ( &context->random ) < 0 )
     {
+        pipe_close ( &context->reset_pipe );
         pipe_close ( &context->msgin );
         pipe_close ( &context->msgout );
         pipe_close ( &context->msgloop );
         pipe_close ( &context->applog );
-        pipe_close ( &context->reset_pipe );
         return -1;
     }
 
@@ -96,11 +91,11 @@ static int nettalk_init ( struct nettalk_context_t *context )
  */
 static void nettalk_free ( struct nettalk_context_t *context )
 {
+    pipe_close ( &context->reset_pipe );
     pipe_close ( &context->msgin );
     pipe_close ( &context->msgout );
     pipe_close ( &context->msgloop );
     pipe_close ( &context->applog );
-    pipe_close ( &context->reset_pipe );
     nettalk_random_free ( &context->random );
     mbedtls_pk_free ( &context->config.self_rsa_priv_key );
     mbedtls_pk_free ( &context->config.self_rsa_pub_key );

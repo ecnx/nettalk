@@ -87,15 +87,8 @@ int nettalk_connect ( struct nettalk_context_t *context )
         return -1;
     }
 
-    if ( socket_set_send_timeout ( context->session.sock, NETTALK_CONN_TIMEOUT ) < 0 )
-    {
-        nettalk_errcode ( context, "failed to set connect timeout", errno );
-        shutdown_then_close ( context->session.sock );
-        return -1;
-    }
-
-    if ( connect ( context->session.sock, ( struct sockaddr * ) &saddr,
-            sizeof ( struct sockaddr_in ) ) < 0 )
+    if ( connect_timeout ( context->session.sock, ( struct sockaddr * ) &saddr,
+            sizeof ( struct sockaddr_in ), NETTALK_CONN_TIMEOUT ) < 0 )
     {
         if ( context->socks5_enabled )
         {
@@ -105,13 +98,6 @@ int nettalk_connect ( struct nettalk_context_t *context )
         {
             nettalk_errcode ( context, "failed to connect server", errno );
         }
-        shutdown_then_close ( context->session.sock );
-        return -1;
-    }
-
-    if ( socket_unset_send_timeout ( context->session.sock ) < 0 )
-    {
-        nettalk_errcode ( context, "failed to unset connect timeout", errno );
         shutdown_then_close ( context->session.sock );
         return -1;
     }

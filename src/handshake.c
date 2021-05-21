@@ -73,7 +73,7 @@ int nettalk_handshake ( struct nettalk_context_t *context )
     {
         struct
         {
-            uint8_t nonce[AES256_BLOCKLEN];
+            uint8_t iv[AES256_BLOCKLEN];
             uint8_t hmac[SHA256_BLOCKLEN];
         } s;
         uint8_t bytes[AES256_BLOCKLEN + SHA256_BLOCKLEN];
@@ -82,7 +82,7 @@ int nettalk_handshake ( struct nettalk_context_t *context )
     {
         struct
         {
-            uint8_t nonce[AES256_BLOCKLEN];
+            uint8_t iv[AES256_BLOCKLEN];
             uint8_t hmac[SHA256_BLOCKLEN];
         } s;
         uint8_t bytes[AES256_BLOCKLEN + SHA256_BLOCKLEN];
@@ -150,56 +150,56 @@ int nettalk_handshake ( struct nettalk_context_t *context )
     memset ( self_partial_key, '\0', sizeof ( self_partial_key ) );
     memset ( peer_partial_key, '\0', sizeof ( peer_partial_key ) );
 
-    if ( nettalk_random_bytes ( &context->random, tx.s.nonce, sizeof ( tx.s.nonce ) ) )
+    if ( nettalk_random_bytes ( &context->random, tx.s.iv, sizeof ( tx.s.iv ) ) )
     {
         nettalk_error ( context, "failed to get random bytes" );
         memset ( aeskey, '\0', sizeof ( aeskey ) );
         return -1;
     }
 
-    nettalk_info ( context, "generated auth tx nonce" );
+    nettalk_info ( context, "generated auth tx iv" );
 
     if ( ( ret =
-            hmac_sha256 ( aeskey, sizeof ( aeskey ), tx.s.nonce, sizeof ( tx.s.nonce ),
+            hmac_sha256 ( aeskey, sizeof ( aeskey ), tx.s.iv, sizeof ( tx.s.iv ),
                 tx.s.hmac ) ) != 0 )
     {
-        nettalk_errcode ( context, "failed to sign tx nonce", ret );
+        nettalk_errcode ( context, "failed to sign tx iv", ret );
         memset ( aeskey, '\0', sizeof ( aeskey ) );
         return -1;
     }
 
-    nettalk_info ( context, "signed auth tx nonce with hmac" );
+    nettalk_info ( context, "signed auth tx iv with hmac" );
 
     if ( send_complete_with_reset ( context, context->session.sock, tx.bytes,
             sizeof ( tx.bytes ), NETTALK_SEND_TIMEOUT ) < 0 )
     {
-        nettalk_errcode ( context, "failed to send tx nonce", errno );
+        nettalk_errcode ( context, "failed to send tx iv", errno );
         memset ( aeskey, '\0', sizeof ( aeskey ) );
         return -1;
     }
 
-    nettalk_info ( context, "sent auth tx signed nonce" );
+    nettalk_info ( context, "sent auth tx signed iv" );
 
     if ( recv_complete_with_reset ( context, context->session.sock, rx.bytes,
             sizeof ( rx.bytes ), NETTALK_RECV_TIMEOUT ) < 0 )
     {
-        nettalk_errcode ( context, "failed to receive rx nonce", errno );
+        nettalk_errcode ( context, "failed to receive rx iv", errno );
         memset ( aeskey, '\0', sizeof ( aeskey ) );
         return -1;
     }
 
-    nettalk_info ( context, "received auth rx signed nonce" );
+    nettalk_info ( context, "received auth rx signed iv" );
 
     if ( ( ret =
-            hmac_sha256 ( aeskey, sizeof ( aeskey ), rx.s.nonce, sizeof ( rx.s.nonce ),
+            hmac_sha256 ( aeskey, sizeof ( aeskey ), rx.s.iv, sizeof ( rx.s.iv ),
                 calc_hmac ) ) != 0 )
     {
-        nettalk_errcode ( context, "nonce hmac recalculation failed", ret );
+        nettalk_errcode ( context, "iv hmac recalculation failed", ret );
         memset ( aeskey, '\0', sizeof ( aeskey ) );
         return -1;
     }
 
-    nettalk_info ( context, "recalculated rx nonce signature" );
+    nettalk_info ( context, "recalculated rx iv signature" );
 
     if ( memcmp ( calc_hmac, rx.s.hmac, SHA256_BLOCKLEN ) )
     {
@@ -208,56 +208,34 @@ int nettalk_handshake ( struct nettalk_context_t *context )
         return -1;
     }
 
-    memcpy ( context->session.tx_nonce, tx.s.nonce, sizeof ( context->session.tx_nonce ) );
-    memcpy ( context->session.rx_nonce, rx.s.nonce, sizeof ( context->session.rx_nonce ) );
+    memcpy ( context->session.tx_iv, tx.s.iv, sizeof ( context->session.tx_iv ) );
+    memcpy ( context->session.rx_iv, rx.s.iv, sizeof ( context->session.rx_iv ) );
 
     nettalk_info ( context, "remote peer has been authorized" );
 
-    mbedtls_gcm_init ( &context->session.tx_aes );
-    mbedtls_gcm_init ( &context->session.rx_aes );
+    mbedtls_aes_init ( &context->session.tx_aes );
+    mbedtls_aes_init ( &context->session.rx_aes );
 
     if ( ( ret =
-            mbedtls_gcm_setkey ( &context->session.tx_aes, MBEDTLS_CIPHER_ID_AES, aeskey,
-                256 ) ) != 0 )
+            mbedtls_aes_setkey_enc ( &context->session.tx_aes, aeskey, AES256_KEYLEN_BITS ) ) != 0 )
     {
-        nettalk_errcode ( context, "gcm set tx key failed", ret );
+        nettalk_errcode ( context, "aes set tx key failed", ret );
         memset ( aeskey, '\0', sizeof ( aeskey ) );
-        mbedtls_gcm_free ( &context->session.tx_aes );
+        mbedtls_aes_free ( &context->session.tx_aes );
         return -1;
     }
 
     if ( ( ret =
-            mbedtls_gcm_setkey ( &context->session.rx_aes, MBEDTLS_CIPHER_ID_AES, aeskey,
-                256 ) ) != 0 )
+            mbedtls_aes_setkey_dec ( &context->session.rx_aes, aeskey, AES256_KEYLEN_BITS ) ) != 0 )
     {
-        nettalk_errcode ( context, "gcm set rx key failed", ret );
+        nettalk_errcode ( context, "aes set rx key failed", ret );
         memset ( aeskey, '\0', sizeof ( aeskey ) );
-        mbedtls_gcm_free ( &context->session.tx_aes );
-        mbedtls_gcm_free ( &context->session.rx_aes );
+        mbedtls_aes_free ( &context->session.tx_aes );
+        mbedtls_aes_free ( &context->session.rx_aes );
         return -1;
     }
 
     memset ( aeskey, '\0', sizeof ( aeskey ) );
-
-    if ( ( ret =
-            mbedtls_gcm_starts ( &context->session.tx_aes, MBEDTLS_GCM_ENCRYPT,
-                context->session.tx_nonce, sizeof ( context->session.tx_nonce ), NULL, 0 ) ) != 0 )
-    {
-        nettalk_errcode ( context, "gcm tx start failed", ret );
-        mbedtls_gcm_free ( &context->session.tx_aes );
-        mbedtls_gcm_free ( &context->session.rx_aes );
-        return -1;
-    }
-
-    if ( ( ret =
-            mbedtls_gcm_starts ( &context->session.rx_aes, MBEDTLS_GCM_DECRYPT,
-                context->session.rx_nonce, sizeof ( context->session.rx_nonce ), NULL, 0 ) ) != 0 )
-    {
-        nettalk_errcode ( context, "gcm rx start failed", ret );
-        mbedtls_gcm_free ( &context->session.tx_aes );
-        mbedtls_gcm_free ( &context->session.rx_aes );
-        return -1;
-    }
 
     nettalk_success ( context, "you are connected with peer" );
 

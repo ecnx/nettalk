@@ -130,7 +130,7 @@ static int audiorec_start ( struct nettalk_context_t *context, struct audio_mic_
     nettalk_info ( context, "microphone enabled" );
 
     /* Forward PCM data loop */
-    while ( context->capture_status )
+    while ( context->capture_status && !session_would_reconnect ( context ) )
     {
         /* Gather PCM data */
         if ( ( int ) ( read_frames =
@@ -179,14 +179,13 @@ static int audiorec_start ( struct nettalk_context_t *context, struct audio_mic_
 static void capture_fallback ( struct nettalk_context_t *context )
 {
     ssize_t len;
-    struct pollfd fds[1];
     unsigned char buffer[AMRNB_CHUNK_MAX];
 
     /* Prepare message chunk buffer */
     memcpy ( buffer, text_chunk, sizeof ( buffer ) );
 
     /* Message forward loop */
-    while ( !context->capture_status )
+    while ( !context->capture_status && !session_would_reconnect ( context ) )
     {
         /* Reset remote decoder once */
         if ( context->reset_encoder_peer )
@@ -199,24 +198,10 @@ static void capture_fallback ( struct nettalk_context_t *context )
             context->reset_encoder_peer = 0;
         }
 
-        /* Prepare poll events */
-        fds[0].fd = context->msgout.u.s.readfd;
-        fds[0].events = POLLERR | POLLHUP | POLLIN;
-
-        if ( poll ( fds, 1, 100 ) > 0 )
+        if ( ( len =
+                read_with_reset ( context, context->msgout.u.s.readfd, buffer + 24,
+                    sizeof ( buffer ) - 24, 100 ) ) > 0 )
         {
-            if ( fds[0].revents & ( POLLERR | POLLHUP ) )
-            {
-                break;
-            }
-
-            if ( ( len =
-                    read ( context->msgout.u.s.readfd, buffer + 24,
-                        sizeof ( buffer ) - 24 ) ) <= 0 )
-            {
-                break;
-            }
-
             memset ( buffer + 24 + len, '\0', sizeof ( buffer ) - 24 - len );
 
             if ( send_complete_with_reset ( context, context->bridge.u.s.local, buffer,
@@ -225,9 +210,9 @@ static void capture_fallback ( struct nettalk_context_t *context )
                 break;
             }
 
-            if ( write ( context->msgloop.u.s.writefd, buffer + 24, sizeof ( buffer ) - 24 ) < 0 )
-            {
-            }
+        } else if ( errno != ETIMEDOUT )
+        {
+            break;
         }
     }
 }
@@ -261,10 +246,13 @@ static void voicerec_cycle ( struct nettalk_context_t *context )
 
     if ( audiorec_start ( context, &mic ) < 0 )
     {
-        nettalk_info ( context, "audio input not available" );
-        context->capture_status = FALSE;
-        gettimeofdayv ( &context->capture_status_timestamp );
-        capture_fallback ( context );
+        if ( !session_would_reconnect ( context ) )
+        {
+            nettalk_info ( context, "audio input not available" );
+            context->capture_status = FALSE;
+            gettimeofdayv ( &context->capture_status_timestamp );
+            capture_fallback ( context );
+        }
     }
 }
 
@@ -278,6 +266,10 @@ static void *voice_capture_entry ( void *arg )
     for ( ;; )
     {
         voicerec_cycle ( context );
+        if ( session_would_reconnect ( context ) )
+        {
+            break;
+        }
         sleep ( 1 );
     }
 
@@ -287,12 +279,10 @@ static void *voice_capture_entry ( void *arg )
 /**
  * Voice Capture Task
  */
-int voice_capture_launch ( struct nettalk_context_t *context )
+int voice_capture_launch ( struct nettalk_context_t *context, pthread_t * pthread )
 {
-    long pref;
-
     /* Start scanner task asynchronously */
-    if ( pthread_create ( ( pthread_t * ) & pref, NULL, voice_capture_entry, context ) != 0 )
+    if ( pthread_create ( pthread, NULL, voice_capture_entry, context ) != 0 )
     {
         return -1;
     }

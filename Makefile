@@ -4,7 +4,7 @@ GSMAMR=$(OPENCORE_AMR)/opencore/codecs_v2/audio/gsm_amr
 AMRNB_INC=-I $(OPENCORE_AMR)/oscl -I $(GSMAMR)/amr_nb/common/include -I $(GSMAMR)/common/dec/include -I $(GSMAMR)/amr_nb/enc/src -I $(GSMAMR)/amr_nb/dec/include -I $(GSMAMR)/amr_nb/dec/src
 INCLUDES=-I include -I lib `pkg-config --cflags gtk+-3.0` $(AMRNB_INC) -I ../soxr/src
 INDENT_FLAGS=-br -ce -i4 -bl -bli0 -bls -c4 -cdw -ci4 -cs -nbfda -l100 -lp -prs -nlp -nut -nbfde -npsl -nss
-LIBS=$(OPENCORE_AMR)/amrnb/.libs/libopencore-amrnb.a -pthread -lmbedcrypto -lm `pkg-config --libs gtk+-3.0` -lasound ../soxr/src/libsoxr.so -lnotify
+LIBS=$(OPENCORE_AMR)/amrnb/.libs/libopencore-amrnb.a -pthread -lmbedcrypto -lm `pkg-config --libs gtk+-3.0` -lasound ../soxr/Release/src/libsoxr.so -lnotify
 
 OBJS = \
 	bin/sound.o \
@@ -14,7 +14,6 @@ OBJS = \
 	bin/compress.o \
 	bin/startup.o \
 	bin/config.o \
-	bin/logger.o \
 	bin/fxcrypt.o \
 	bin/random.o \
 	bin/util.o \
@@ -24,6 +23,7 @@ OBJS = \
 	bin/nettask.o \
 	bin/window.o \
 	bin/socks5.o \
+	bin/logger.o \
 	bin/dns.o \
 	bin/program_icon.o
 
@@ -49,8 +49,6 @@ internal: prepare icons
 	@$(CC) $(CFLAGS) $(INCLUDES) src/startup.c -o bin/startup.o
 	@echo "  CC    src/config.c"
 	@$(CC) $(CFLAGS) $(INCLUDES) src/config.c -o bin/config.o
-	@echo "  CC    src/logger.c"
-	@$(CC) $(CFLAGS) $(INCLUDES) src/logger.c -o bin/logger.o
 	@echo "  CC    src/random.c"
 	@$(CC) $(CFLAGS) $(INCLUDES) src/random.c -o bin/random.o
 	@echo "  CC    src/util.c"
@@ -65,6 +63,8 @@ internal: prepare icons
 	@$(CC) $(CFLAGS) $(INCLUDES) src/nettask.c -o bin/nettask.o
 	@echo "  CC    src/socks5.c"
 	@$(CC) $(CFLAGS) $(INCLUDES) src/socks5.c -o bin/socks5.o
+	@echo "  CC    src/logger.c"
+	@$(CC) $(CFLAGS) $(INCLUDES) src/logger.c -o bin/logger.o
 	@echo "  CC    lib/fxcrypt.c"
 	@$(CC) $(CFLAGS) $(INCLUDES) lib/fxcrypt.c -o bin/fxcrypt.o
 	@echo "  CC    lib/dns.c"

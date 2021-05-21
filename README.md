@@ -33,7 +33,7 @@ To setup NetTalk proxy server:
 _Note: nettalk-proxy, another project here, is needed to make it work_  
 
 NetTalk uses following libraries / algorithms:  
-* mbedtls (RSA, AES-GCM, HMAC)
+* mbedtls (RSA, AES-CBC, HMAC)
 * soxr (resampling)
 * opencoreamr-nb (voice compression)
 * libevent (notifications)
