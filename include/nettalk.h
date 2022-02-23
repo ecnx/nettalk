@@ -38,6 +38,7 @@ enum
     MESSAGE_TYPE_PEER_TIME = 'q',
     MESSAGE_TYPE_SELF = 's',
     MESSAGE_TYPE_SELF_TIME = 't',
+    MESSAGE_TYPE_COMMON_TIME = 'c',
     MESSAGE_TYPE_LOG = 'l'
 };
 
@@ -280,6 +281,11 @@ extern int recv_complete_with_reset ( struct nettalk_context_t *context, int soc
  * Shutdown and close the socket
  */
 extern void shutdown_then_close ( int sock );
+
+/**
+ * Secure move data in memory
+ */
+extern void secure_move_mem ( void *dst, void *src, size_t size );
 
 /**
  * Secure free data from memory

@@ -21,7 +21,7 @@ void nettalk_info ( struct nettalk_context_t *context, const char *format, ... )
             len = strlen ( str );
             if ( len + 1 < sizeof ( str ) )
             {
-                str[len++] = '\n';
+                str[len++] = '\a';
                 str[len] = '\0';
                 if ( write ( context->applog.u.s.writefd, str, len ) >= 0 )
                 {
@@ -49,7 +49,7 @@ void nettalk_success ( struct nettalk_context_t *context, const char *format, ..
             len = strlen ( str );
             if ( len + 1 < sizeof ( str ) )
             {
-                str[len++] = '\n';
+                str[len++] = '\a';
                 str[len] = '\0';
                 if ( write ( context->applog.u.s.writefd, str, len ) >= 0 )
                 {
@@ -77,7 +77,7 @@ void nettalk_error ( struct nettalk_context_t *context, const char *format, ... 
             len = strlen ( str );
             if ( len + 1 < sizeof ( str ) )
             {
-                str[len++] = '\n';
+                str[len++] = '\a';
                 str[len] = '\0';
                 if ( write ( context->applog.u.s.writefd, str, len ) >= 0 )
                 {

@@ -196,7 +196,7 @@ int load_config ( struct nettalk_context_t *context, const char *path, const cha
         return -1;
     }
 
-    if ( fxcrypt_decrypt_mem ( &fxctx, password, path, ( void ** ) &props, &len ) < 0 )
+    if ( fxcrypt_decrypt_file2mem ( &fxctx, password, path, ( uint8_t ** ) & props, &len ) < 0 )
     {
         fxcrypt_free ( &fxctx );
         return -1;

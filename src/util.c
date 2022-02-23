@@ -406,6 +406,23 @@ void shutdown_then_close ( int sock )
 }
 
 /**
+ * Secure move data in memory
+ */
+void secure_move_mem ( void *dst, void *src, size_t size )
+{
+    void *tmp;
+
+    if ( !( tmp = malloc ( size ) ) )
+    {
+        return;
+    }
+
+    memcpy ( tmp, src, size );
+    memcpy ( dst, tmp, size );
+    secure_free_mem ( tmp, size );
+}
+
+/**
  * Secure free data from memory
  */
 void secure_free_mem ( void *mem, size_t size )

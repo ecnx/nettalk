@@ -167,7 +167,6 @@ static int audioplay_start ( struct nettalk_context_t *context, struct audio_spe
     /* Forward PCM data loop */
     while ( context->playback_status && !session_would_reconnect ( context ) )
     {
-
         if ( done == nframes )
         {
             if ( poll ( fds, 1, 100 ) > 0 )

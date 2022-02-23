@@ -86,6 +86,12 @@ static void message_cell_data_func ( GtkTreeViewColumn * column, GtkCellRenderer
             smalltext = 2;
             color = "Gray";
             break;
+        case MESSAGE_TYPE_COMMON_TIME:
+            bold = FALSE;
+            align = 0.5;
+            smalltext = 2;
+            color = "Gray";
+            break;
         case MESSAGE_TYPE_LOG:
             bold = FALSE;
             align = 0.5;
@@ -108,6 +114,9 @@ static void message_cell_data_func ( GtkTreeViewColumn * column, GtkCellRenderer
             }
             break;
         default:
+            g_object_set ( renderer, "text", "<unknown message type>", "weight",
+                PANGO_WEIGHT_NORMAL, "xalign", 0.5, "size",
+                11 * PANGO_SCALE, "foreground", "Black", NULL );
             return;
         }
 
@@ -255,14 +264,25 @@ static void cleanup_messages ( struct nettalk_context_t *context )
 }
 
 /**
- * Append message to chat table
+ * Append message to chat table with custom length
  */
-static void put_message ( struct nettalk_context_t *context, const char *message )
+static void put_message_len ( struct nettalk_context_t *context, int type, const char *message,
+    size_t len )
 {
+    char *raw;
     GtkTreeModel *model;
     GtkListStore *store;
     GtkTreePath *path;
     GtkTreeIter iter;
+
+    if ( !( raw = ( char * ) malloc ( len + 2 ) ) )
+    {
+        return;
+    }
+
+    raw[0] = type;
+    memcpy ( raw + 1, message, len );
+    raw[len + 1] = '\0';
 
     model = gtk_tree_view_get_model ( GTK_TREE_VIEW ( context->gui.chat ) );
     store = GTK_LIST_STORE ( model );
@@ -275,7 +295,7 @@ static void put_message ( struct nettalk_context_t *context, const char *message
     append_message_timestamp ( context, time ( NULL ) );
 
     gtk_list_store_append ( store, &iter );
-    gtk_list_store_set ( store, &iter, TABLE_CHAT_COLUMN, message, -1 );
+    gtk_list_store_set ( store, &iter, TABLE_CHAT_COLUMN, raw, -1 );
     path = gtk_tree_path_new_from_indices ( context->nmessages, -1 );
 
     gtk_tree_view_scroll_to_cell ( GTK_TREE_VIEW ( context->gui.chat ), path, NULL, FALSE, 0, 0 );
@@ -285,13 +305,15 @@ static void put_message ( struct nettalk_context_t *context, const char *message
 
     context->nmessages++;
 
-    if ( context->notena && message[0] == MESSAGE_TYPE_PEER )
-    {
-        if ( !gtk_window_is_active ( context->gui.window ) )
-        {
-            show_notification ( context, message + 1 );
-        }
-    }
+    free ( raw );
+}
+
+/**
+ * Append message to chat table
+ */
+static void put_message ( struct nettalk_context_t *context, int type, const char *message )
+{
+    put_message_len ( context, type, message, strlen ( message ) );
 }
 
 /**
@@ -299,7 +321,7 @@ static void put_message ( struct nettalk_context_t *context, const char *message
  */
 static int reply_message ( struct nettalk_context_t *context, const char *message )
 {
-    const char newline = '\n';
+    const char delim = '\a';
     size_t len;
     char str[MSGSIZE];
 
@@ -309,7 +331,7 @@ static int reply_message ( struct nettalk_context_t *context, const char *messag
 
         if ( len + 1 < sizeof ( str ) )
         {
-            snprintf ( str, sizeof ( str ), "%s\n", message );
+            snprintf ( str, sizeof ( str ), "%s\a", message );
 
             if ( write ( context->msgout.u.s.writefd, str, strlen ( str ) ) > 0 )
             {
@@ -323,7 +345,7 @@ static int reply_message ( struct nettalk_context_t *context, const char *messag
         {
             if ( write ( context->msgout.u.s.writefd, message, strlen ( message ) ) > 0 )
             {
-                if ( write ( context->msgout.u.s.writefd, &newline, sizeof ( newline ) ) > 0 )
+                if ( write ( context->msgout.u.s.writefd, &delim, sizeof ( delim ) ) > 0 )
                 {
                     return 0;
                 }
@@ -368,9 +390,35 @@ static gboolean reply_on_key_press ( GtkWidget * widget, GdkEventKey * event, gp
 }
 
 /**
+ * Find first space character
+ */
+static ssize_t find_first_break ( const char *input, size_t len )
+{
+    size_t i;
+
+    for ( i = 0; i < len; i++ )
+    {
+        if ( input[i] == '\n' )
+        {
+            return i;
+        }
+    }
+
+    for ( i = 0; i < len; i++ )
+    {
+        if ( input[i] == ' ' )
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+/**
  * Find last space character
  */
-static ssize_t find_last_space ( const char *input, size_t len )
+static ssize_t find_last_break ( const char *input, size_t len )
 {
     ssize_t i;
 
@@ -378,9 +426,12 @@ static ssize_t find_last_space ( const char *input, size_t len )
     {
         if ( input[i] == '\n' )
         {
-            return -1;
+            return i;
         }
+    }
 
+    for ( i = len - 1; i >= 0; i-- )
+    {
         if ( input[i] == ' ' )
         {
             return i;
@@ -408,12 +459,11 @@ static void put_timetag ( struct nettalk_context_t *context, int type )
         return;
     }
 
-    /* Set message type */
-    message[0] = type;
     /* Format time to a string */
-    strftime ( message + 1, sizeof ( message ) - 1, "%Y-%m-%d %H:%M:%S", &time_struct );
+    strftime ( message, sizeof ( message ) - 1, "%Y-%m-%d %H:%M:%S", &time_struct );
+
     /* Put the message */
-    put_message ( context, message );
+    put_message ( context, type, message );
 }
 
 /**
@@ -423,12 +473,60 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
     struct nettalk_msgbuf_t *msgbuf )
 {
     char c;
-    int exit_flag = FALSE;
-    int msg_done = FALSE;
+    size_t i;
     int timetag_type;
+    size_t bound = 0;
+    size_t offset = 0;
     ssize_t space;
-    size_t nleft;
+    size_t left;
+    size_t limit;
     struct nettalk_msgbuf_t workbuf;
+
+    while ( msgbuf->len < sizeof ( msgbuf->array ) )
+    {
+        if ( read ( fd, &c, sizeof ( c ) ) <= 0 )
+        {
+            break;
+        }
+
+        if ( c )
+        {
+            msgbuf->array[msgbuf->len++] = c;
+        }
+    }
+
+    for ( i = 0; i < msgbuf->len; i++ )
+    {
+        if ( msgbuf->array[i] == '\a' )
+        {
+            bound = i;
+            break;
+        }
+    }
+
+    if ( i == msgbuf->len )
+    {
+        if ( msgbuf->len != sizeof ( msgbuf->array ) )
+        {
+            return;
+        }
+
+        bound = msgbuf->len;
+        memcpy ( workbuf.array, msgbuf->array, bound );
+        msgbuf->len = 0;
+
+    } else
+    {
+        left = msgbuf->len - bound;
+        memcpy ( workbuf.array, msgbuf->array, bound );
+        secure_move_mem ( msgbuf->array, msgbuf->array + bound + 1, left );
+        msgbuf->len = left - 1;
+    }
+
+    if ( !bound )
+    {
+        return;
+    }
 
     switch ( type )
     {
@@ -439,73 +537,46 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
         timetag_type = MESSAGE_TYPE_PEER_TIME;
         break;
     default:
-        timetag_type = -1;
+        timetag_type = MESSAGE_TYPE_COMMON_TIME;
     }
 
-    while ( !exit_flag )
+    while ( bound - offset > MSGSIZE )
     {
-        if ( msgbuf->len == 0 )
-        {
-            msgbuf->array[msgbuf->len++] = type;
-        }
+        limit = bound - offset;
 
-        while ( msgbuf->len + 1 < sizeof ( msgbuf->array ) )
+        if ( ( space =
+                find_last_break ( msgbuf->array + offset,
+                    limit < MSGSIZE ? limit : MSGSIZE ) ) < 0 )
         {
-            if ( read ( fd, &c, sizeof ( c ) ) <= 0 )
-            {
-                exit_flag = TRUE;
-                break;
-            }
-
-            if ( c == '\n' )
+            if ( ( space = find_first_break ( msgbuf->array + offset, limit ) ) < 0 )
             {
                 break;
             }
-
-            if ( msgbuf->len >= MSGSIZE )
-            {
-                if ( ( space = find_last_space ( msgbuf->array, msgbuf->len ) ) > 0 )
-                {
-                    msgbuf->array[space] = '\0';
-                    put_message ( context, msgbuf->array );
-                    msg_done = TRUE;
-                    nleft = msgbuf->len - space;
-                    memcpy ( workbuf.array, msgbuf->array + space, nleft );
-                    memcpy ( msgbuf->array, workbuf.array, nleft );
-                    msgbuf->len = nleft;
-                    msgbuf->array[0] = type;
-                }
-            }
-
-            if ( c )
-            {
-                msgbuf->array[msgbuf->len++] = c;
-            }
         }
 
-        if ( msgbuf->len > 1 )
-        {
-            msgbuf->array[msgbuf->len] = '\0';
-            put_message ( context, msgbuf->array );
-            msg_done = TRUE;
-            memset ( msgbuf->array, '\0', msgbuf->len );
-            msgbuf->len = 0;
-        }
-
-        c = '\0';
+        put_message_len ( context, type, workbuf.array + offset, space );
+        offset += space + 1;
     }
 
-    if ( msg_done && timetag_type >= 0 )
+    if ( offset < bound )
     {
-        put_timetag ( context, timetag_type );
+        put_message_len ( context, type, workbuf.array + offset, bound - offset );
+    }
+
+    put_timetag ( context, timetag_type );
+
+    if ( context->notena && type == MESSAGE_TYPE_PEER )
+    {
+        if ( !gtk_window_is_active ( context->gui.window ) )
+        {
+            workbuf.array[bound] = '\0';
+            show_notification ( context, workbuf.array );
+        }
+
+        play_notification_sound ( context );
     }
 
     memset ( workbuf.array, '\0', sizeof ( workbuf.array ) );
-
-    if ( type == MESSAGE_TYPE_PEER && msg_done )
-    {
-        play_notification_sound ( context );
-    }
 }
 
 /**
@@ -950,9 +1021,9 @@ static void menu_verbose_mode ( GtkMenuItem * menu_item, gpointer user_data )
 }
 
 /**
- * Edit Copy Message menu handler
+ * Copy message internal
  */
-static void menu_copy ( GtkMenuItem * menu_item, gpointer user_data )
+static void menu_copy_internal ( struct nettalk_context_t *context )
 {
     gchar *value;
     gchar *message;
@@ -960,6 +1031,55 @@ static void menu_copy ( GtkMenuItem * menu_item, gpointer user_data )
     GtkTreeModel *model;
     GtkTreeSelection *selection;
     GtkClipboard *clipboard;
+
+    if ( !context->complete )
+    {
+        return;
+    }
+
+    if ( ( selection = gtk_tree_view_get_selection ( GTK_TREE_VIEW ( context->gui.chat ) ) ) )
+    {
+        if ( gtk_tree_selection_get_selected ( selection, &model, &iter ) )
+        {
+            gtk_tree_model_get ( model, &iter, TABLE_CHAT_COLUMN, &value, -1 );
+            if ( value )
+            {
+                message = value;
+
+                switch ( message[0] )
+                {
+                case MESSAGE_TYPE_PEER:
+                case MESSAGE_TYPE_PEER_TIME:
+                case MESSAGE_TYPE_SELF:
+                case MESSAGE_TYPE_SELF_TIME:
+                case MESSAGE_TYPE_COMMON_TIME:
+                    message++;
+                    break;
+                case MESSAGE_TYPE_LOG:
+                    message++;
+                    if ( message[0] )
+                    {
+                        message++;
+                    }
+                    break;
+                }
+
+                if ( ( clipboard = gtk_clipboard_get ( GDK_SELECTION_CLIPBOARD ) ) )
+                {
+                    gtk_clipboard_set_text ( clipboard, message, -1 );
+                }
+
+                g_secure_free_string ( value );
+            }
+        }
+    }
+}
+
+/**
+ * Edit Copy Message menu handler
+ */
+static void menu_copy ( GtkMenuItem * menu_item, gpointer user_data )
+{
     struct nettalk_context_t *context;
 
     UNUSED ( menu_item );
@@ -967,47 +1087,26 @@ static void menu_copy ( GtkMenuItem * menu_item, gpointer user_data )
     if ( user_data )
     {
         context = ( struct nettalk_context_t * ) user_data;
+        menu_copy_internal ( context );
+    }
+}
 
-        if ( !context->complete )
-        {
-            return;
-        }
+/**
+ * Table Copy Message event handler
+ */
+static void table_on_row_activated ( GtkTreeView * view, GtkTreePath * path,
+    GtkTreeViewColumn * column, gpointer user_data )
+{
+    struct nettalk_context_t *context;
 
-        if ( ( selection = gtk_tree_view_get_selection ( GTK_TREE_VIEW ( context->gui.chat ) ) ) )
-        {
-            if ( gtk_tree_selection_get_selected ( selection, &model, &iter ) )
-            {
-                gtk_tree_model_get ( model, &iter, TABLE_CHAT_COLUMN, &value, -1 );
-                if ( value )
-                {
-                    message = value;
+    UNUSED ( view );
+    UNUSED ( path );
+    UNUSED ( column );
 
-                    switch ( message[0] )
-                    {
-                    case MESSAGE_TYPE_PEER:
-                    case MESSAGE_TYPE_PEER_TIME:
-                    case MESSAGE_TYPE_SELF:
-                    case MESSAGE_TYPE_SELF_TIME:
-                        message++;
-                        break;
-                    case MESSAGE_TYPE_LOG:
-                        message++;
-                        if ( message[0] )
-                        {
-                            message++;
-                        }
-                        break;
-                    }
-
-                    if ( ( clipboard = gtk_clipboard_get ( GDK_SELECTION_CLIPBOARD ) ) )
-                    {
-                        gtk_clipboard_set_text ( clipboard, message, -1 );
-                    }
-
-                    g_secure_free_string ( value );
-                }
-            }
-        }
+    if ( user_data )
+    {
+        context = ( struct nettalk_context_t * ) user_data;
+        menu_copy_internal ( context );
     }
 }
 
@@ -1159,7 +1258,7 @@ int window_init ( struct nettalk_context_t *context )
     GtkWidget *chatscroll;
 
     gtk_init ( 0, NULL );
-    notify_init ( "cmus-notify" );
+    notify_init ( "Nettalk" );
 
     context->bufin.len = 0;
     context->bufloop.len = 0;
@@ -1243,6 +1342,8 @@ int window_init ( struct nettalk_context_t *context )
     gtk_menu_shell_append ( GTK_MENU_SHELL ( menu_bar ), help_menu );
 
     context->gui.chat = create_chattab (  );
+    g_signal_connect ( context->gui.chat, "row-activated", G_CALLBACK ( table_on_row_activated ),
+        context );
 
     chatscroll = gtk_scrolled_window_new ( NULL, NULL );
     gtk_container_add ( GTK_CONTAINER ( chatscroll ), context->gui.chat );
