@@ -129,7 +129,7 @@ struct nettalk_session_t
 struct nettalk_msgbuf_t
 {
     size_t len;
-    char array[BUFSIZE];
+    char array[MSGSIZE];
 };
 
 /**
