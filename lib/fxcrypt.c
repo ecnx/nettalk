@@ -140,7 +140,7 @@ static int read_complete ( int fd, uint8_t * arr, size_t len )
 }
 
 /**
- * Write complete block of data to file 
+ * Write complete block of data to file
  */
 static int write_complete ( int fd, const uint8_t * arr, size_t len )
 {
@@ -159,12 +159,38 @@ static int write_complete ( int fd, const uint8_t * arr, size_t len )
 }
 
 /**
- * Write complete block of data to file and mac
+ * Push data block to buffer
  */
-static int write_complete_and_mac ( int fd, const uint8_t * arr, size_t len,
+static int push_buffer ( struct fxcrypt_buffer_t *output, const uint8_t * arr, size_t len )
+{
+    if ( output->mem )
+    {
+        if ( output->pos + len > output->tot )
+        {
+            return -1;
+        }
+
+        memcpy ( output->mem + output->pos, arr, len );
+        output->pos += len;
+
+    } else if ( output->fd >= 0 )
+    {
+        if ( write_complete ( output->fd, arr, len ) < 0 )
+        {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * Push data block to buffer and mac
+ */
+static int push_buffer_and_hmac ( struct fxcrypt_buffer_t *output, const uint8_t * arr, size_t len,
     mbedtls_md_context_t * md )
 {
-    if ( write_complete ( fd, arr, len ) < 0 )
+    if ( push_buffer ( output, arr, len ) < 0 )
     {
         return -1;
     }
@@ -178,10 +204,64 @@ static int write_complete_and_mac ( int fd, const uint8_t * arr, size_t len,
 }
 
 /**
+ * Shift data block from buffer
+ */
+static int shift_buffer ( struct fxcrypt_buffer_t *input, uint8_t * arr, size_t len )
+{
+    if ( input->mem )
+    {
+        if ( input->pos + len >= input->tot )
+        {
+            return -1;
+        }
+
+        memcpy ( arr, input->mem + input->pos, len );
+        input->pos += len;
+
+    } else
+    {
+        if ( read_complete ( input->fd, arr, len ) < 0 )
+        {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * Read data block from buffer
+ */
+static ssize_t read_buffer ( struct fxcrypt_buffer_t *input, uint8_t * arr, size_t len )
+{
+    ssize_t cpylen;
+
+    if ( input->mem )
+    {
+        if ( input->pos + len > input->tot )
+        {
+            cpylen = input->tot - input->pos;
+
+        } else
+        {
+            cpylen = len;
+        }
+
+        memcpy ( arr, input->mem + input->pos, cpylen );
+        input->pos += cpylen;
+        return cpylen;
+
+    } else
+    {
+        return read ( input->fd, arr, len );
+    }
+}
+
+/**
  * Encrypt data internal
  */
 static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *password,
-    int ifd, int ofd, const uint8_t * imem, size_t ilen )
+    struct fxcrypt_buffer_t *input, struct fxcrypt_buffer_t *output )
 {
     int finish = FALSE;
     ssize_t len;
@@ -246,7 +326,7 @@ static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *p
     memset ( key, '\0', sizeof ( key ) );
 
     /* Append salt to file */
-    if ( write_complete_and_mac ( ofd, salt, sizeof ( salt ), &md ) < 0 )
+    if ( push_buffer_and_hmac ( output, salt, sizeof ( salt ), &md ) < 0 )
     {
         mbedtls_md_free ( &md );
         mbedtls_aes_free ( &aes );
@@ -254,24 +334,24 @@ static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *p
     }
 
     /* Append iv to file */
-    if ( write_complete_and_mac ( ofd, iv, sizeof ( iv ), &md ) < 0 )
+    if ( push_buffer_and_hmac ( output, iv, sizeof ( iv ), &md ) < 0 )
     {
         mbedtls_md_free ( &md );
         mbedtls_aes_free ( &aes );
         return -1;
     }
 
-    /* Encrypt file or memory content */
-    if ( imem )
+    /* Encrypt memory or file data */
+    if ( input->mem )
     {
-        while ( offset < ilen )
+        while ( offset < input->tot )
         {
-            len = ilen - offset;
+            len = input->tot - offset;
             if ( len > ( ssize_t ) sizeof ( arr ) )
             {
                 len = sizeof ( arr );
             }
-            memcpy ( arr, imem + offset, len );
+            memcpy ( arr, input->mem + offset, len );
             offset += len;
 
             /* Stop once block of data is not aligned to AES block */
@@ -300,7 +380,7 @@ static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *p
                 }
 
                 /* Append block of ciphertext to file */
-                if ( write_complete_and_mac ( ofd, arr, len, &md ) < 0 )
+                if ( push_buffer_and_hmac ( output, arr, len, &md ) < 0 )
                 {
                     mbedtls_md_free ( &md );
                     mbedtls_aes_free ( &aes );
@@ -312,7 +392,7 @@ static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *p
 
     } else
     {
-        while ( ( len = read ( ifd, arr, sizeof ( arr ) ) ) > 0 )
+        while ( ( len = read ( input->fd, arr, sizeof ( arr ) ) ) > 0 )
         {
             /* Stop once block of data is not aligned to AES block */
             if ( finish )
@@ -340,7 +420,7 @@ static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *p
                 }
 
                 /* Append block of ciphertext to file */
-                if ( write_complete_and_mac ( ofd, arr, len, &md ) < 0 )
+                if ( push_buffer_and_hmac ( output, arr, len, &md ) < 0 )
                 {
                     mbedtls_md_free ( &md );
                     mbedtls_aes_free ( &aes );
@@ -360,7 +440,7 @@ static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *p
         }
     }
 
-    /* Handle content PKCS#7 padding */
+    /* Handle data PKCS#7 padding */
     if ( left )
     {
         memcpy ( pad, arr + pos, left );
@@ -387,7 +467,7 @@ static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *p
     mbedtls_aes_free ( &aes );
 
     /* Append padding block to file */
-    if ( write_complete_and_mac ( ofd, pad, sizeof ( pad ), &md ) < 0 )
+    if ( push_buffer_and_hmac ( output, pad, sizeof ( pad ), &md ) < 0 )
     {
         mbedtls_md_free ( &md );
         return -1;
@@ -401,7 +481,7 @@ static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *p
     }
 
     /* Append HMAC to file */
-    if ( write_complete ( ofd, hmac, sizeof ( hmac ) ) < 0 )
+    if ( push_buffer ( output, hmac, sizeof ( hmac ) ) < 0 )
     {
         mbedtls_md_free ( &md );
         return -1;
@@ -414,14 +494,16 @@ static int fxcrypt_encrypt_in ( struct fxcrypt_context_t *context, const char *p
 }
 
 /**
- * Encrypt file content
+ * Encrypt data file-to-file
  */
-int fxcrypt_encrypt_file ( struct fxcrypt_context_t *context, const char *password,
+int fxcrypt_encrypt_file2file ( struct fxcrypt_context_t *context, const char *password,
     const char *ipath, const char *opath )
 {
     int ret;
     int ifd;
     int ofd;
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
 
     /* Context must be initialized */
     if ( !context->initialized )
@@ -442,11 +524,19 @@ int fxcrypt_encrypt_file ( struct fxcrypt_context_t *context, const char *passwo
         return -1;
     }
 
-    /* Encrypt the file */
-    ret = fxcrypt_encrypt_in ( context, password, ifd, ofd, NULL, 0 );
+    /* Prepare input buffer */
+    input.fd = ifd;
+
+    /* Prepare output buffer */
+    output.fd = ofd;
+
+    /* Encrypt data */
+    ret = fxcrypt_encrypt_in ( context, password, &input, &output );
 
     /* Clenaup */
+#ifndef FXCRYPT_NO_SYNCFS
     syncfs ( ofd );
+#endif
     close ( ifd );
     close ( ofd );
 
@@ -454,13 +544,92 @@ int fxcrypt_encrypt_file ( struct fxcrypt_context_t *context, const char *passwo
 }
 
 /**
- * Encrypt file content
+ * Encrypt data file-to-mem
  */
-int fxcrypt_encrypt_mem ( struct fxcrypt_context_t *context, const char *password,
-    const void *imem, size_t ilen, const char *opath )
+int fxcrypt_encrypt_file2mem ( struct fxcrypt_context_t *context, const char *password,
+    const char *ipath, uint8_t ** omem, size_t *olen )
+{
+    int ret;
+    int ifd;
+    size_t ilen;
+    size_t osize;
+    uint8_t *optr;
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
+
+    /* Context must be initialized */
+    if ( !context->initialized )
+    {
+        return -1;
+    }
+
+    /* Open input file for reading */
+    if ( ( ifd = open ( ipath, O_RDONLY ) ) < 0 )
+    {
+        return -1;
+    }
+
+    /* Measure input file */
+    if ( ( off_t ) ( ilen = lseek ( ifd, 0, SEEK_END ) ) < 0 )
+    {
+        close ( ifd );
+        return -1;
+    }
+
+    if ( lseek ( ifd, 0, SEEK_SET ) < 0 )
+    {
+        close ( ifd );
+        return -1;
+    }
+
+    /* Calculate output buffer size */
+    osize = ilen + AES256_KEYLEN + 2 * AES256_BLOCKLEN + SHA256_BLOCKLEN;
+
+    /* Allocate output buffer */
+    if ( !( optr = ( uint8_t * ) malloc ( osize ) ) )
+    {
+        close ( ifd );
+        return -1;
+    }
+
+    /* Prepare input buffer */
+    input.fd = ifd;
+
+    /* Prepare output buffer */
+    output.mem = optr;
+    output.tot = osize;
+
+    /* Encrypt data */
+    ret = fxcrypt_encrypt_in ( context, password, &input, &output );
+
+    /* Cleanup */
+    close ( ifd );
+
+    /* Finalize */
+    if ( ret >= 0 )
+    {
+        *omem = optr;
+        *olen = output.pos;
+
+    } else
+    {
+        memset ( optr, '\0', osize );
+        free ( optr );
+    }
+
+    return ret;
+}
+
+/**
+ * Encrypt data mem-to-file
+ */
+int fxcrypt_encrypt_mem2file ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen, const char *opath )
 {
     int ret;
     int ofd;
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
 
     /* Context must be initialized */
     if ( !context->initialized )
@@ -474,12 +643,74 @@ int fxcrypt_encrypt_mem ( struct fxcrypt_context_t *context, const char *passwor
         return -1;
     }
 
-    /* Encrypt the file */
-    ret = fxcrypt_encrypt_in ( context, password, -1, ofd, ( const uint8_t * ) imem, ilen );
+    /* Prepare input buffer */
+    input.mem = ( uint8_t * ) imem;
+    input.tot = ilen;
+
+    /* Prepare output buffer */
+    output.fd = ofd;
+
+    /* Encrypt data */
+    ret = fxcrypt_encrypt_in ( context, password, &input, &output );
 
     /* Clenaup */
+#ifndef FXCRYPT_NO_SYNCFS
     syncfs ( ofd );
+#endif
     close ( ofd );
+
+    return ret;
+}
+
+/**
+ * Encrypt data mem-to-mem
+ */
+int fxcrypt_encrypt_mem2mem ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen, uint8_t ** omem, size_t *olen )
+{
+    int ret;
+    size_t osize;
+    uint8_t *optr;
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
+
+    /* Context must be initialized */
+    if ( !context->initialized )
+    {
+        return -1;
+    }
+
+    /* Calculate output buffer size */
+    osize = ilen + AES256_KEYLEN + 2 * AES256_BLOCKLEN + SHA256_BLOCKLEN;
+
+    /* Allocate output buffer */
+    if ( !( optr = ( uint8_t * ) malloc ( osize ) ) )
+    {
+        return -1;
+    }
+
+    /* Prepare input buffer */
+    input.mem = ( uint8_t * ) imem;
+    input.tot = ilen;
+
+    /* Prepare output buffer */
+    output.mem = optr;
+    output.tot = osize;
+
+    /* Encrypt data */
+    ret = fxcrypt_encrypt_in ( context, password, &input, &output );
+
+    /* Finalize */
+    if ( ret >= 0 )
+    {
+        *omem = optr;
+        *olen = output.pos;
+
+    } else
+    {
+        memset ( optr, '\0', osize );
+        free ( optr );
+    }
 
     return ret;
 }
@@ -513,12 +744,10 @@ static int pkcs7_get_unaligned_length ( const uint8_t * arr, ssize_t len, ssize_
  * Decrypt data internal
  */
 static int fxcrypt_decrypt_in ( struct fxcrypt_context_t *context, const char *password,
-    int ifd, int ofd, uint8_t * omem, size_t *olen )
+    struct fxcrypt_buffer_t *input, struct fxcrypt_buffer_t *output )
 {
     ssize_t len;
     ssize_t left;
-    size_t limit = 0;
-    size_t offset;
     mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
     mbedtls_md_context_t md;
     mbedtls_aes_context aes;
@@ -541,21 +770,14 @@ static int fxcrypt_decrypt_in ( struct fxcrypt_context_t *context, const char *p
     mbedtls_md_init ( &md );
     mbedtls_aes_init ( &aes );
 
-    /* Setup decrypt to memory variables */
-    if ( omem && olen )
-    {
-        offset = 0;
-        limit = *olen;
-    }
-
     /* Read salt from file */
-    if ( read_complete ( ifd, salt, sizeof ( salt ) ) < 0 )
+    if ( shift_buffer ( input, salt, sizeof ( salt ) ) < 0 )
     {
         return -1;
     }
 
     /* Read iv from file */
-    if ( read_complete ( ifd, iv, sizeof ( iv ) ) < 0 )
+    if ( shift_buffer ( input, iv, sizeof ( iv ) ) < 0 )
     {
         return -1;
     }
@@ -613,16 +835,16 @@ static int fxcrypt_decrypt_in ( struct fxcrypt_context_t *context, const char *p
     memset ( key, '\0', sizeof ( key ) );
 
     /* Read first chunk of data */
-    if ( read_complete ( ifd, tail.bytes, sizeof ( tail.bytes ) ) < 0 )
+    if ( shift_buffer ( input, tail.bytes, sizeof ( tail.bytes ) ) < 0 )
     {
         mbedtls_md_free ( &md );
         mbedtls_aes_free ( &aes );
         return -1;
     }
 
-    /* Encrypt file content */
+    /* Decrypt data */
     while ( ( len =
-            read ( ifd, arr + sizeof ( tail.bytes ),
+            read_buffer ( input, arr + sizeof ( tail.bytes ),
                 sizeof ( arr ) - sizeof ( tail.bytes ) ) ) > 0 )
     {
         /* Reuse last chunk as first chunk */
@@ -658,29 +880,13 @@ static int fxcrypt_decrypt_in ( struct fxcrypt_context_t *context, const char *p
             return -1;
         }
 
-        /* Append block of plaintext to memory or file */
-        if ( omem && olen )
+        /* Update result */
+        if ( push_buffer ( output, arr, len ) < 0 )
         {
-            if ( offset + len >= limit )
-            {
-                mbedtls_md_free ( &md );
-                mbedtls_aes_free ( &aes );
-                memset ( arr, '\0', sizeof ( arr ) );
-                return -1;
-            }
-
-            memcpy ( omem + offset, arr, len );
-            offset += len;
-
-        } else if ( ofd >= 0 )
-        {
-            if ( write_complete ( ofd, arr, len ) < 0 )
-            {
-                mbedtls_md_free ( &md );
-                mbedtls_aes_free ( &aes );
-                memset ( arr, '\0', sizeof ( arr ) );
-                return -1;
-            }
+            mbedtls_md_free ( &md );
+            mbedtls_aes_free ( &aes );
+            memset ( arr, '\0', sizeof ( arr ) );
+            return -1;
         }
     }
 
@@ -733,27 +939,12 @@ static int fxcrypt_decrypt_in ( struct fxcrypt_context_t *context, const char *p
         return -1;
     }
 
-    /* Append block of plaintext to memory or file */
-    if ( omem && olen )
+    /* Update result */
+    if ( push_buffer ( output, tail.s.pad, left ) < 0 )
     {
-        if ( offset + left >= limit )
-        {
-            mbedtls_md_free ( &md );
-            memset ( tail.s.pad, '\0', sizeof ( tail.s.pad ) );
-            return -1;
-        }
-
-        memcpy ( omem + offset, tail.s.pad, left );
-        offset += left;
-
-    } else if ( ofd >= 0 )
-    {
-        if ( write_complete ( ofd, tail.s.pad, left ) < 0 )
-        {
-            mbedtls_md_free ( &md );
-            memset ( tail.s.pad, '\0', sizeof ( tail.s.pad ) );
-            return -1;
-        }
+        mbedtls_md_free ( &md );
+        memset ( tail.s.pad, '\0', sizeof ( tail.s.pad ) );
+        return -1;
     }
 
     /* Finalize HMAC */
@@ -773,24 +964,21 @@ static int fxcrypt_decrypt_in ( struct fxcrypt_context_t *context, const char *p
     /* Uninitialize HMAC context */
     mbedtls_md_free ( &md );
 
-    /* Uodate decrypt to memory variables */
-    if ( omem && olen )
-    {
-        *olen = offset;
-    }
-
     return 0;
 }
 
+
 /**
- * Decrypt file content
+ * Decrypt data file-to-file
  */
-int fxcrypt_decrypt_file ( struct fxcrypt_context_t *context, const char *password,
+int fxcrypt_decrypt_file2file ( struct fxcrypt_context_t *context, const char *password,
     const char *ipath, const char *opath )
 {
     int ret;
     int ifd;
     int ofd;
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
 
     /* Context must be initialized */
     if ( !context->initialized )
@@ -811,11 +999,19 @@ int fxcrypt_decrypt_file ( struct fxcrypt_context_t *context, const char *passwo
         return -1;
     }
 
-    /* Encrypt the file */
-    ret = fxcrypt_decrypt_in ( context, password, ifd, ofd, NULL, NULL );
+    /* Prepare input buffer */
+    input.fd = ifd;
+
+    /* Prepare output buffer */
+    output.fd = ofd;
+
+    /* Decrypt data */
+    ret = fxcrypt_decrypt_in ( context, password, &input, &output );
 
     /* Clenaup */
+#ifndef FXCRYPT_NO_SYNCFS
     syncfs ( ofd );
+#endif
     close ( ifd );
     close ( ofd );
 
@@ -823,15 +1019,18 @@ int fxcrypt_decrypt_file ( struct fxcrypt_context_t *context, const char *passwo
 }
 
 /**
- * Decrypt file content into memory
+ * Decrypt data file-to-mem
  */
-int fxcrypt_decrypt_mem ( struct fxcrypt_context_t *context, const char *password,
-    const char *ipath, void **omem, size_t *olen )
+int fxcrypt_decrypt_file2mem ( struct fxcrypt_context_t *context, const char *password,
+    const char *ipath, uint8_t ** omem, size_t *olen )
 {
     int ret;
     int ifd;
-    uint8_t *local_omem;
-    size_t local_olen;
+    size_t ilen;
+    size_t osize;
+    uint8_t *optr;
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
 
     /* Context must be initialized */
     if ( !context->initialized )
@@ -846,47 +1045,161 @@ int fxcrypt_decrypt_mem ( struct fxcrypt_context_t *context, const char *passwor
     }
 
     /* Measure input file */
-    if ( ( ssize_t ) ( local_olen = ( size_t ) lseek ( ifd, 0, SEEK_END ) ) < 0 )
+    if ( ( off_t ) ( ilen = lseek ( ifd, 0, SEEK_END ) ) < 0 )
     {
         close ( ifd );
         return -1;
     }
 
-    /* Restore file pointer */
     if ( lseek ( ifd, 0, SEEK_SET ) < 0 )
     {
         close ( ifd );
         return -1;
     }
 
+    /* Calculate output buffer size */
+    osize = ilen;
+
     /* Allocate output buffer */
-    if ( !( local_omem = ( uint8_t * ) malloc ( local_olen ) ) )
+    if ( !( optr = ( uint8_t * ) malloc ( osize ) ) )
     {
         close ( ifd );
         return -1;
     }
 
-    /* Encrypt the file */
-    if ( ( ret = fxcrypt_decrypt_in ( context, password, ifd, -1, local_omem, &local_olen ) ) >= 0 )
-    {
-        *omem = local_omem;
-        *olen = local_olen;
-    }
+    /* Prepare input buffer */
+    input.fd = ifd;
 
-    /* Clenaup */
+    /* Prepare output buffer */
+    output.mem = optr;
+    output.tot = osize;
+
+    /* Decrypt data */
+    ret = fxcrypt_decrypt_in ( context, password, &input, &output );
+
+    /* Cleanup */
     close ( ifd );
+
+    /* Finalize */
+    if ( ret >= 0 )
+    {
+        *omem = optr;
+        *olen = output.pos;
+
+    } else
+    {
+        memset ( optr, '\0', osize );
+        free ( optr );
+    }
 
     return ret;
 }
 
 /**
- * Verify file content
+ * Decrypt data mem-to-file
+ */
+int fxcrypt_decrypt_mem2file ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen, const char *opath )
+{
+    int ret;
+    int ofd;
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
+
+    /* Context must be initialized */
+    if ( !context->initialized )
+    {
+        return -1;
+    }
+
+    /* Open output file for writing */
+    if ( ( ofd = open ( opath, O_CREAT | O_TRUNC | O_WRONLY, 0644 ) ) < 0 )
+    {
+        return -1;
+    }
+
+    /* Prepare input buffer */
+    input.mem = ( uint8_t * ) imem;
+    input.tot = ilen;
+
+    /* Prepare output buffer */
+    output.fd = ofd;
+
+    /* Decrypt data */
+    ret = fxcrypt_decrypt_in ( context, password, &input, &output );
+
+    /* Clenaup */
+#ifndef FXCRYPT_NO_SYNCFS
+    syncfs ( ofd );
+#endif
+    close ( ofd );
+
+    return ret;
+}
+
+/**
+ * Decrypt data mem-to-mem
+ */
+int fxcrypt_decrypt_mem2mem ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen, uint8_t ** omem, size_t *olen )
+{
+    int ret;
+    size_t osize;
+    uint8_t *optr;
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
+
+    /* Context must be initialized */
+    if ( !context->initialized )
+    {
+        return -1;
+    }
+
+    /* Calculate output buffer size */
+    osize = ilen;
+
+    /* Allocate output buffer */
+    if ( !( optr = ( uint8_t * ) malloc ( osize ) ) )
+    {
+        return -1;
+    }
+
+    /* Prepare input buffer */
+    input.mem = ( uint8_t * ) imem;
+    input.tot = ilen;
+
+    /* Prepare output buffer */
+    output.mem = optr;
+    output.tot = osize;
+
+    /* Decrypt data */
+    ret = fxcrypt_decrypt_in ( context, password, &input, &output );
+
+    /* Finalize */
+    if ( ret >= 0 )
+    {
+        *omem = optr;
+        *olen = output.pos;
+
+    } else
+    {
+        memset ( optr, '\0', osize );
+        free ( optr );
+    }
+
+    return ret;
+}
+
+/**
+ * Verify file data
  */
 int fxcrypt_verify_file ( struct fxcrypt_context_t *context, const char *password,
     const char *ipath )
 {
     int ret;
     int ifd;
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
 
     /* Context must be initialized */
     if ( !context->initialized )
@@ -900,11 +1213,43 @@ int fxcrypt_verify_file ( struct fxcrypt_context_t *context, const char *passwor
         return -1;
     }
 
+    /* Prepare input buffer */
+    input.fd = ifd;
+
+    /* Prepare output buffer */
+    output.fd = -1;
+
     /* Encrypt the file */
-    ret = fxcrypt_decrypt_in ( context, password, ifd, -1, NULL, NULL );
+    ret = fxcrypt_decrypt_in ( context, password, &input, &output );
 
     /* Clenaup */
     close ( ifd );
 
     return ret;
+}
+
+/**
+ * Verify memory data
+ */
+int fxcrypt_verify_mem ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen )
+{
+    struct fxcrypt_buffer_t input = { 0 };
+    struct fxcrypt_buffer_t output = { 0 };
+
+    /* Context must be initialized */
+    if ( !context->initialized )
+    {
+        return -1;
+    }
+
+    /* Prepare input buffer */
+    input.mem = ( uint8_t * ) imem;
+    input.tot = ilen;
+
+    /* Prepare output buffer */
+    output.fd = -1;
+
+    /* Encrypt the file */
+    return fxcrypt_decrypt_in ( context, password, &input, &output );
 }

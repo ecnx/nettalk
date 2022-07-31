@@ -5,13 +5,16 @@
 #ifndef FXCRYPT_LIB_H
 #define FXCRYPT_LIB_H
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/stat.h>
+#endif
 #include <fcntl.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <mbedtls/entropy.h>
@@ -36,7 +39,7 @@
 #define FS_BLOCKLEN 4096
 
 /**
- * FxCrypt random generator wrapper
+ * FxCrypt random generator
  */
 struct fxcrypt_random_t
 {
@@ -53,6 +56,17 @@ struct fxcrypt_context_t
     int initialized;
     int derive_n_rounds;
     struct fxcrypt_random_t random;
+};
+
+/**
+ * Internal buffer structure
+ */
+struct fxcrypt_buffer_t
+{
+    int fd;
+    uint8_t *mem;
+    size_t pos;
+    size_t tot;
 };
 
 /**
@@ -81,33 +95,63 @@ extern int fxcrypt_init ( struct fxcrypt_context_t *context, int derive_n_rounds
 extern void fxcrypt_free ( struct fxcrypt_context_t *context );
 
 /**
- * Encrypt file content
+ * Encrypt data file-to-file
  */
-extern int fxcrypt_encrypt_file ( struct fxcrypt_context_t *context, const char *password,
+extern int fxcrypt_encrypt_file2file ( struct fxcrypt_context_t *context, const char *password,
     const char *ipath, const char *opath );
 
 /**
- * Encrypt memory content to file
+ * Encrypt data file-to-mem
  */
-extern int fxcrypt_encrypt_mem ( struct fxcrypt_context_t *context, const char *password,
-    const void *imem, size_t ilen, const char *opath );
+extern int fxcrypt_encrypt_file2mem ( struct fxcrypt_context_t *context, const char *password,
+    const char *ipath, uint8_t ** omem, size_t *olen );
 
 /**
- * Decrypt file content
+ * Encrypt data mem-to-file
  */
-extern int fxcrypt_decrypt_file ( struct fxcrypt_context_t *context, const char *password,
+extern int fxcrypt_encrypt_mem2file ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen, const char *opath );
+
+/**
+ * Encrypt data mem-to-mem
+ */
+extern int fxcrypt_encrypt_mem2mem ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen, uint8_t ** omem, size_t *olen );
+
+/**
+ * Decrypt data file-to-file
+ */
+extern int fxcrypt_decrypt_file2file ( struct fxcrypt_context_t *context, const char *password,
     const char *ipath, const char *opath );
 
 /**
- * Decrypt file content into memory
+ * Decrypt data file-to-mem
  */
-extern int fxcrypt_decrypt_mem ( struct fxcrypt_context_t *context, const char *password,
-    const char *ipath, void **omem, size_t *olen );
+extern int fxcrypt_decrypt_file2mem ( struct fxcrypt_context_t *context, const char *password,
+    const char *ipath, uint8_t ** omem, size_t *olen );
 
 /**
- * Verify file content
+ * Decrypt data mem-to-file
+ */
+extern int fxcrypt_decrypt_mem2file ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen, const char *opath );
+
+/**
+ * Decrypt data mem-to-mem
+ */
+extern int fxcrypt_decrypt_mem2mem ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen, uint8_t ** omem, size_t *olen );
+
+/**
+ * Verify file data
  */
 extern int fxcrypt_verify_file ( struct fxcrypt_context_t *context, const char *password,
     const char *ipath );
+
+/**
+ * Verify memory data
+ */
+extern int fxcrypt_verify_mem ( struct fxcrypt_context_t *context, const char *password,
+    const uint8_t * imem, size_t ilen );
 
 #endif
