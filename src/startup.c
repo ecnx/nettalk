@@ -160,10 +160,7 @@ static void show_usage ( void )
 int main ( int argc, char *argv[] )
 {
     int arg_off = 0;
-    static struct nettalk_context_t context;
-
-    /* Reset app context */
-    memset ( &context, '\0', sizeof ( context ) );
+    static struct nettalk_context_t context = { 0 };
 
     /* Validate arguments count */
     if ( argc < 2 )

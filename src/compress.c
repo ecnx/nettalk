@@ -15,7 +15,6 @@ int nettalk_audio_encoder_init ( struct nettalk_context_t *context,
     struct audio_encoder_t *encoder )
 {
     int status;
-    size_t ratio;
     soxr_error_t soxr_error;
     soxr_quality_spec_t q_spec;
 
@@ -30,9 +29,6 @@ int nettalk_audio_encoder_init ( struct nettalk_context_t *context,
 
     /* AMR-NB rate is 8kHz */
     encoder->outrate = 8000;
-
-    /* Calculate resample size ratio */
-    ratio = encoder->inrate / encoder->outrate;
 
     /* Adjust AMR-NB mode */
     switch ( encoder->bitrate )
@@ -66,8 +62,7 @@ int nettalk_audio_encoder_init ( struct nettalk_context_t *context,
     }
 
     /* Prepare buffers allocation */
-    if ( !( encoder->output_size =
-            ( AMRNB_CHUNK_MAX * encoder->frames_max + 1 ) / ratio / AMRNB_SAMPLES_MAX ) )
+    if ( !( encoder->output_size = AMRNB_CHUNK_MAX * encoder->frames_max / AMRNB_SAMPLES_MAX ) )
     {
         return -1;
     }
@@ -89,7 +84,7 @@ int nettalk_audio_encoder_init ( struct nettalk_context_t *context,
     }
 
     if ( !( encoder->samples =
-            ( short * ) malloc ( ( ( encoder->frames_max + 1 ) / ratio +
+            ( short * ) malloc ( ( encoder->frames_max +
                     AMRNB_SAMPLES_MAX ) * sizeof ( short ) ) ) )
     {
         nettalk_errcode ( context, "mic samples alloc failed", errno );
@@ -330,6 +325,7 @@ int nettalk_encode_audio ( struct nettalk_context_t *context, struct audio_encod
         memcpy ( encoder->samples, left, len );
 
     }
+
     encoder->samples_left = len;
 
     /* Send output data */
@@ -347,11 +343,6 @@ int nettalk_encode_audio ( struct nettalk_context_t *context, struct audio_encod
  */
 void nettalk_audio_encoder_free ( struct audio_encoder_t *encoder )
 {
-    free_ref ( ( void ** ) &encoder->resample_in );
-    free_ref ( ( void ** ) &encoder->resample_out );
-    free_ref ( ( void ** ) &encoder->samples );
-    free_ref ( ( void ** ) &encoder->output );
-
     if ( encoder->amrnb && encoder->sid_sync )
     {
         AMREncodeExit ( &encoder->amrnb, &encoder->sid_sync );
@@ -364,4 +355,9 @@ void nettalk_audio_encoder_free ( struct audio_encoder_t *encoder )
         soxr_delete ( encoder->soxr );
         encoder->soxr = NULL;
     }
+
+    free_ref ( ( void ** ) &encoder->resample_in );
+    free_ref ( ( void ** ) &encoder->resample_out );
+    free_ref ( ( void ** ) &encoder->samples );
+    free_ref ( ( void ** ) &encoder->output );
 }

@@ -9,7 +9,6 @@
  */
 int resolve_ipv4 ( const char *hostname, unsigned int *addr )
 {
-#ifdef SYSTEM_RESOLVER
     struct hostent *he;
     struct in_addr **addr_list;
 
@@ -39,16 +38,6 @@ int resolve_ipv4 ( const char *hostname, unsigned int *addr )
     *addr = ( *addr_list )[0].s_addr;
 
     return 0;
-#else
-
-    /* Directly parse address */
-    if ( inet_pton ( AF_INET, hostname, addr ) > 0 )
-    {
-        return 0;
-    }
-
-    return nsaddr ( hostname, addr );
-#endif
 }
 
 /**
@@ -64,6 +53,7 @@ int nettalk_connect ( struct nettalk_context_t *context )
 
     memset ( &saddr, '\0', sizeof ( saddr ) );
     saddr.sin_family = AF_INET;
+
     if ( context->socks5_enabled )
     {
         saddr.sin_addr.s_addr = context->socks5_addr;

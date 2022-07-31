@@ -222,8 +222,8 @@ static void capture_fallback ( struct nettalk_context_t *context )
  */
 static void voicerec_cycle ( struct nettalk_context_t *context )
 {
-    struct audio_encoder_t encoder;
-    struct audio_mic_t mic;
+    struct audio_encoder_t encoder = { 0 };
+    struct audio_mic_t mic = { 0 };
 
     if ( !context->capture_status )
     {
@@ -231,14 +231,13 @@ static void voicerec_cycle ( struct nettalk_context_t *context )
         return;
     }
 
-    memset ( &encoder, '\0', sizeof ( encoder ) );
     encoder.bitrate = 12200;
     encoder.init_callback = nettalk_audio_encoder_init;
     encoder.process_callback = nettalk_encode_audio;
     encoder.free_callback = nettalk_audio_encoder_free;
 
-    memset ( &mic, '\0', sizeof ( mic ) );
     strncpy ( mic.dev, ALSA_DEFAULT_DEV, sizeof ( mic.dev ) );
+    mic.dev[sizeof ( mic.dev ) - 1] = '\0';
     mic.channels = AUDIO_LAYOUT_MONO;
     mic.rate = AUDIO_RATE_DEFAULT;
     mic.format = SND_PCM_FORMAT_FLOAT_LE;

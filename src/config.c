@@ -14,7 +14,7 @@ static int props_get ( const char *props, const char *name, char *value, size_t 
     const char *start_ptr;
     const char *end_ptr;
 
-    if ( strchr ( name, '#' ) == name )
+    if ( strchr ( name, '#' ) || strchr ( name, '=' ) || strchr ( name, '\n' ) )
     {
         return -1;
     }
@@ -24,15 +24,12 @@ static int props_get ( const char *props, const char *name, char *value, size_t 
     start_ptr = props;
     while ( ( start_ptr = strstr ( start_ptr, name ) ) )
     {
-        if ( start_ptr[name_len] != '=' )
+        if ( start_ptr[name_len] == '=' )
         {
-            start_ptr += name_len;
-            continue;
-        }
-
-        if ( start_ptr == props || start_ptr[-1] == '\n' )
-        {
-            break;
+            if ( start_ptr == props || start_ptr[-1] == '\n' )
+            {
+                break;
+            }
         }
 
         start_ptr += name_len;
@@ -160,6 +157,7 @@ static int load_config_in ( struct nettalk_context_t *context, const char *props
 
     if ( props_get ( props, "peer", buffer, bufsize ) < 0 )
     {
+        mbedtls_pk_free ( &config->self_rsa_priv_key );
         return -1;
     }
 
@@ -202,10 +200,10 @@ int load_config ( struct nettalk_context_t *context, const char *path, const cha
         return -1;
     }
 
-    nettalk_info ( context, "config decrypted successfully" );
-
-    props[len] = '\0';
     fxcrypt_free ( &fxctx );
+    props[len] = '\0';
+
+    nettalk_info ( context, "config decrypted successfully" );
 
     ret = load_config_in ( context, props, buffer, sizeof ( buffer ) );
 

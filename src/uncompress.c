@@ -38,21 +38,22 @@ int nettalk_audio_decoder_init ( struct nettalk_context_t *context,
 
     /* Prepare buffers allocation */
     if ( !( decoder->input_size =
-            decoder->frames_max * AMRNB_CHUNK_MIN / ratio / AMRNB_SAMPLES_MAX ) )
+            ( decoder->frames_max - 2 ) * AMRNB_CHUNK_MIN / ratio / AMRNB_SAMPLES_MAX ) )
     {
         return -1;
     }
 
     /* Allocate buffers */
-    if ( !( decoder->input = ( unsigned char * ) malloc ( decoder->input_size ) ) )
+    if ( !( decoder->input =
+            ( unsigned char * ) malloc ( decoder->frames_max * AMRNB_CHUNK_MIN /
+                AMRNB_SAMPLES_MAX ) ) )
     {
         nettalk_errcode ( context, "speaker input alloc failed", errno );
         nettalk_audio_decoder_free ( decoder );
         return -1;
     }
 
-    if ( !( decoder->samples =
-            ( short * ) malloc ( decoder->frames_max / ratio * sizeof ( short ) ) ) )
+    if ( !( decoder->samples = ( short * ) malloc ( decoder->frames_max * sizeof ( short ) ) ) )
     {
         nettalk_errcode ( context, "speaker samples alloc failed", errno );
         nettalk_audio_decoder_free ( decoder );
@@ -304,11 +305,6 @@ int nettalk_decode_audio ( struct nettalk_context_t *context, struct audio_decod
  */
 void nettalk_audio_decoder_free ( struct audio_decoder_t *decoder )
 {
-    free_ref ( ( void ** ) &decoder->input );
-    free_ref ( ( void ** ) &decoder->samples );
-    free_ref ( ( void ** ) &decoder->resample_in );
-    free_ref ( ( void ** ) &decoder->resample_out );
-
     if ( decoder->amrnb )
     {
         GSMDecodeFrameExit ( &decoder->amrnb );
@@ -320,4 +316,9 @@ void nettalk_audio_decoder_free ( struct audio_decoder_t *decoder )
         soxr_delete ( decoder->soxr );
         decoder->soxr = NULL;
     }
+
+    free_ref ( ( void ** ) &decoder->input );
+    free_ref ( ( void ** ) &decoder->samples );
+    free_ref ( ( void ** ) &decoder->resample_in );
+    free_ref ( ( void ** ) &decoder->resample_out );
 }

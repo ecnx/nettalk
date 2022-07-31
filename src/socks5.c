@@ -25,23 +25,15 @@ int socks5_handshake ( struct nettalk_context_t *context, int sock )
 
     /* Receive operation status */
     if ( ( ssize_t ) ( len =
-            recv_with_reset ( context, sock, buffer, sizeof ( buffer ) - 1,
-                NETTALK_RECV_TIMEOUT ) ) < 0 )
+            recv_with_reset ( context, sock, buffer, sizeof ( buffer ),
+                NETTALK_RECV_TIMEOUT ) ) <= 0 )
     {
-        return -1;
-    }
-
-    /* Check for broken pipe */
-    if ( !len )
-    {
-        errno = EPIPE;
         return -1;
     }
 
     /* Analyse received response */
     if ( len != 2 || buffer[0] != 5 || buffer[1] != 0 )
     {
-        errno = EINVAL;
         return -1;
     }
 
@@ -62,7 +54,6 @@ int socks5_request_hostname ( struct nettalk_context_t *context, int sock, const
     /* Get hostname string length */
     if ( ( hostlen = strlen ( hostname ) ) > HOSTLEN )
     {
-        errno = ENOBUFS;
         return -1;
     }
 
@@ -85,23 +76,15 @@ int socks5_request_hostname ( struct nettalk_context_t *context, int sock, const
 
     /* Receive operation status */
     if ( ( ssize_t ) ( len =
-            recv_with_reset ( context, sock, buffer, sizeof ( buffer ) - 1,
-                NETTALK_RECV_TIMEOUT ) ) < 0 )
+            recv_with_reset ( context, sock, buffer, sizeof ( buffer ),
+                NETTALK_RECV_TIMEOUT ) ) <= 0 )
     {
-        return -1;
-    }
-
-    /* Check for broken pipe */
-    if ( !len )
-    {
-        errno = EPIPE;
         return -1;
     }
 
     /* Analyse received response */
-    if ( len < 4 || buffer[0] != 5 || buffer[1] != 0 || buffer[3] != 1 )
+    if ( len < 2 || buffer[0] != 5 || buffer[1] != 0 )
     {
-        errno = EINVAL;
         return -1;
     }
 

@@ -82,7 +82,7 @@ static int audioplay_start ( struct nettalk_context_t *context, struct audio_spe
     if ( ( err =
             snd_pcm_hw_params_set_channels ( playback_handle, hw_params, speaker->channels ) ) < 0 )
     {
-        nettalk_error ( context, "speaker set channel to %i failed" );
+        nettalk_error ( context, "speaker set channel to %i failed", speaker->channels );
         nettalk_error ( context, "%s", snd_strerror ( err ) );
         goto exit;
     }

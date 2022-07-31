@@ -114,12 +114,20 @@ static void message_cell_data_func ( GtkTreeViewColumn * column, GtkCellRenderer
             }
             break;
         default:
+            g_object_set ( renderer, "text", value + 1, NULL );
+            return;
+
             g_object_set ( renderer, "text", "<unknown message type>", "weight",
                 PANGO_WEIGHT_NORMAL, "xalign", 0.5, "size",
                 11 * PANGO_SCALE, "foreground", "Black", NULL );
             return;
         }
 
+
+        g_object_set ( renderer, "text", value + 1, "weight",
+            bold ? PANGO_WEIGHT_BOLD : PANGO_WEIGHT_NORMAL, "xalign", align, "size",
+            ( 11 - smalltext ) * PANGO_SCALE, "foreground", color, NULL );
+        return;
         g_object_set ( renderer, "text", value + 1, "weight",
             bold ? PANGO_WEIGHT_BOLD : PANGO_WEIGHT_NORMAL, "xalign", align, "size",
             ( 11 - smalltext ) * PANGO_SCALE, "foreground", color, NULL );
@@ -195,6 +203,8 @@ static GtkWidget *create_chattab ( void )
     gtk_tree_view_append_column ( GTK_TREE_VIEW ( view ), column );
     renderer = gtk_cell_renderer_text_new (  );
     gtk_cell_renderer_set_padding ( renderer, 10, 3 );
+    g_object_set ( renderer, "wrap-mode", PANGO_WRAP_WORD, NULL );
+    g_object_set ( renderer, "wrap-width", 500, NULL );
     gtk_tree_view_column_pack_start ( column, renderer, TRUE );
     gtk_tree_view_column_set_cell_data_func ( column, renderer, message_cell_data_func, NULL,
         NULL );
@@ -305,7 +315,7 @@ static void put_message_len ( struct nettalk_context_t *context, int type, const
 
     context->nmessages++;
 
-    free ( raw );
+    secure_free_mem ( raw, len + 2 );
 }
 
 /**
@@ -322,33 +332,14 @@ static void put_message ( struct nettalk_context_t *context, int type, const cha
 static int reply_message ( struct nettalk_context_t *context, const char *message )
 {
     const char delim = '\a';
-    size_t len;
-    char str[MSGSIZE];
 
     if ( context->online )
     {
-        len = strlen ( message );
-
-        if ( len + 1 < sizeof ( str ) )
+        if ( write ( context->msgout.u.s.writefd, message, strlen ( message ) ) > 0 )
         {
-            snprintf ( str, sizeof ( str ), "%s\a", message );
-
-            if ( write ( context->msgout.u.s.writefd, str, strlen ( str ) ) > 0 )
+            if ( write ( context->msgout.u.s.writefd, &delim, sizeof ( delim ) ) > 0 )
             {
-                memset ( str, '\0', sizeof ( str ) );
                 return 0;
-            }
-
-            memset ( str, '\0', sizeof ( str ) );
-
-        } else
-        {
-            if ( write ( context->msgout.u.s.writefd, message, strlen ( message ) ) > 0 )
-            {
-                if ( write ( context->msgout.u.s.writefd, &delim, sizeof ( delim ) ) > 0 )
-                {
-                    return 0;
-                }
             }
         }
     }
@@ -390,58 +381,6 @@ static gboolean reply_on_key_press ( GtkWidget * widget, GdkEventKey * event, gp
 }
 
 /**
- * Find first space character
- */
-static ssize_t find_first_break ( const char *input, size_t len )
-{
-    size_t i;
-
-    for ( i = 0; i < len; i++ )
-    {
-        if ( input[i] == '\n' )
-        {
-            return i;
-        }
-    }
-
-    for ( i = 0; i < len; i++ )
-    {
-        if ( input[i] == ' ' )
-        {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-/**
- * Find last space character
- */
-static ssize_t find_last_break ( const char *input, size_t len )
-{
-    ssize_t i;
-
-    for ( i = len - 1; i >= 0; i-- )
-    {
-        if ( input[i] == '\n' )
-        {
-            return i;
-        }
-    }
-
-    for ( i = len - 1; i >= 0; i-- )
-    {
-        if ( input[i] == ' ' )
-        {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-/**
  * Put time tag for a message
  */
 static void put_timetag ( struct nettalk_context_t *context, int type )
@@ -473,60 +412,7 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
     struct nettalk_msgbuf_t *msgbuf )
 {
     char c;
-    size_t i;
     int timetag_type;
-    size_t bound = 0;
-    size_t offset = 0;
-    ssize_t space;
-    size_t left;
-    size_t limit;
-    struct nettalk_msgbuf_t workbuf;
-
-    while ( msgbuf->len < sizeof ( msgbuf->array ) )
-    {
-        if ( read ( fd, &c, sizeof ( c ) ) <= 0 )
-        {
-            break;
-        }
-
-        if ( c )
-        {
-            msgbuf->array[msgbuf->len++] = c;
-        }
-    }
-
-    for ( i = 0; i < msgbuf->len; i++ )
-    {
-        if ( msgbuf->array[i] == '\a' )
-        {
-            bound = i;
-            break;
-        }
-    }
-
-    if ( i == msgbuf->len )
-    {
-        if ( msgbuf->len != sizeof ( msgbuf->array ) )
-        {
-            return;
-        }
-
-        bound = msgbuf->len;
-        memcpy ( workbuf.array, msgbuf->array, bound );
-        msgbuf->len = 0;
-
-    } else
-    {
-        left = msgbuf->len - bound;
-        memcpy ( workbuf.array, msgbuf->array, bound );
-        secure_move_mem ( msgbuf->array, msgbuf->array + bound + 1, left );
-        msgbuf->len = left - 1;
-    }
-
-    if ( !bound )
-    {
-        return;
-    }
 
     switch ( type )
     {
@@ -540,43 +426,44 @@ static void forward_message_pipe ( struct nettalk_context_t *context, int type, 
         timetag_type = MESSAGE_TYPE_COMMON_TIME;
     }
 
-    while ( bound - offset > MSGSIZE )
+    for ( ;; )
     {
-        limit = bound - offset;
-
-        if ( ( space =
-                find_last_break ( msgbuf->array + offset,
-                    limit < MSGSIZE ? limit : MSGSIZE ) ) < 0 )
+        if ( read ( fd, &c, sizeof ( c ) ) <= 0 )
         {
-            if ( ( space = find_first_break ( msgbuf->array + offset, limit ) ) < 0 )
+            break;
+        }
+
+        if ( c == '\a' )
+        {
+            msgbuf->array[msgbuf->len] = '\0';
+
+            put_message_len ( context, type, msgbuf->array, msgbuf->len );
+            msgbuf->len = 0;
+            put_timetag ( context, timetag_type );
+
+            if ( context->notena && type == MESSAGE_TYPE_PEER )
             {
-                break;
+                if ( !gtk_window_is_active ( context->gui.window ) )
+                {
+                    show_notification ( context, msgbuf->array );
+                }
+
+                play_notification_sound ( context );
             }
-        }
 
-        put_message_len ( context, type, workbuf.array + offset, space );
-        offset += space + 1;
-    }
-
-    if ( offset < bound )
-    {
-        put_message_len ( context, type, workbuf.array + offset, bound - offset );
-    }
-
-    put_timetag ( context, timetag_type );
-
-    if ( context->notena && type == MESSAGE_TYPE_PEER )
-    {
-        if ( !gtk_window_is_active ( context->gui.window ) )
+        } else if ( c )
         {
-            workbuf.array[bound] = '\0';
-            show_notification ( context, workbuf.array );
+            if ( msgbuf->len + 1 >= sizeof ( msgbuf->array ) )
+            {
+                msgbuf->array[msgbuf->len] = '\0';
+                put_message_len ( context, type, msgbuf->array, msgbuf->len );
+                msgbuf->len = 0;
+                put_timetag ( context, timetag_type );
+            }
+
+            msgbuf->array[msgbuf->len++] = c;
         }
-
-        play_notification_sound ( context );
     }
-
-    memset ( workbuf.array, '\0', sizeof ( workbuf.array ) );
 }
 
 /**
@@ -856,20 +743,6 @@ static gboolean update_window ( gpointer user_data )
     cleanup_messages ( context );
 
     return TRUE;
-}
-
-/**
- * Set GTK entry font size
- */
-static void set_entry_fontsize ( GtkWidget * entry, int fontsize )
-{
-    PangoAttrList *attrlist;
-    PangoAttribute *attr;
-    attrlist = pango_attr_list_new (  );
-    attr = pango_attr_size_new_absolute ( fontsize * PANGO_SCALE );
-    pango_attr_list_insert ( attrlist, attr );
-    gtk_entry_set_attributes ( GTK_ENTRY ( entry ), attrlist );
-    pango_attr_list_unref ( attrlist );
 }
 
 /**
@@ -1267,7 +1140,7 @@ int window_init ( struct nettalk_context_t *context )
 
     context->gui.window = gtk_window_new ( GTK_WINDOW_TOPLEVEL );
     update_window_title ( context );
-    gtk_widget_set_size_request ( context->gui.window, 450, 700 );
+    gtk_widget_set_size_request ( context->gui.window, 550, 825 );
 
     pixbuf = load_program_icon (  );
     gtk_window_set_icon ( GTK_WINDOW ( context->gui.window ), pixbuf );
@@ -1375,7 +1248,6 @@ int window_init ( struct nettalk_context_t *context )
     context->gui.reply = gtk_entry_new (  );
     gtk_widget_set_sensitive ( context->gui.reply, FALSE );
     gtk_entry_set_text ( GTK_ENTRY ( context->gui.reply ), "Not connected with peer..." );
-    set_entry_fontsize ( context->gui.reply, 14 );
     g_signal_connect ( context->gui.reply, "key-release-event", G_CALLBACK ( reply_on_key_press ),
         context );
 

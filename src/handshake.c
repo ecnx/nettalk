@@ -127,6 +127,7 @@ int nettalk_handshake ( struct nettalk_context_t *context )
     {
         nettalk_errcode ( context, "failed to receive peer partial-key", errno );
         memset ( self_partial_key, '\0', sizeof ( self_partial_key ) );
+        memset ( peer_partial_key, '\0', sizeof ( peer_partial_key ) );
         return -1;
     }
 

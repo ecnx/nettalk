@@ -55,16 +55,10 @@ int connect_timeout ( int sock, struct sockaddr *saddr, size_t saddr_len, int ti
 {
     int status = 0;
     int so_error = 0;
-    long mode = 0;
     struct pollfd fds[1];
     socklen_t sock_len = sizeof ( int );
 
-    if ( ( mode = fcntl ( sock, F_GETFL, 0 ) ) < 0 )
-    {
-        return -1;
-    }
-
-    if ( fcntl ( sock, F_SETFL, mode | O_NONBLOCK ) < 0 )
+    if ( socket_set_nonblocking ( sock ) < 0 )
     {
         return -1;
     }
@@ -107,12 +101,7 @@ int connect_timeout ( int sock, struct sockaddr *saddr, size_t saddr_len, int ti
         return -1;
     }
 
-    if ( ( mode = fcntl ( sock, F_GETFL, 0 ) ) < 0 )
-    {
-        return -1;
-    }
-
-    if ( fcntl ( sock, F_SETFL, mode & ( ~O_NONBLOCK ) ) < 0 )
+    if ( socket_set_nonblocking ( sock ) < 0 )
     {
         return -1;
     }
@@ -438,7 +427,7 @@ void secure_free_string ( char *string )
 {
     if ( string )
     {
-        secure_free_mem ( string, strlen ( string ) + 1 );
+        secure_free_mem ( string, strlen ( string ) );
     }
 }
 
@@ -447,10 +436,13 @@ void secure_free_string ( char *string )
  */
 void free_ref ( void **buffer )
 {
-    if ( *buffer )
+    if ( buffer )
     {
-        free ( *buffer );
-        *buffer = NULL;
+        if ( *buffer )
+        {
+            free ( *buffer );
+            *buffer = NULL;
+        }
     }
 }
 

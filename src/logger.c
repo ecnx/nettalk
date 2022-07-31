@@ -12,6 +12,7 @@ void nettalk_info ( struct nettalk_context_t *context, const char *format, ... )
     size_t len;
     va_list argp;
     char str[2048];
+
     va_start ( argp, format );
     if ( context->verbose )
     {
@@ -40,6 +41,7 @@ void nettalk_success ( struct nettalk_context_t *context, const char *format, ..
     size_t len;
     va_list argp;
     char str[2048];
+
     va_start ( argp, format );
     if ( context->verbose )
     {
@@ -68,6 +70,7 @@ void nettalk_error ( struct nettalk_context_t *context, const char *format, ... 
     size_t len;
     va_list argp;
     char str[2048];
+
     va_start ( argp, format );
     if ( context->verbose )
     {

@@ -256,7 +256,6 @@ static int decrypt_traffic_in ( struct nettalk_context_t *context, int srcfd, in
     return context->session.rx_nleft == 0;
 }
 
-
 /**
  * Encrypt traffic
  */
@@ -350,9 +349,8 @@ static int nettalk_forward_cycle ( struct nettalk_context_t *context, struct pol
     }
 
     /* Check for error */
-    if ( ( fds[POLL_RESET_PIPE].
-            revents | fds[POLL_NETWORK_SOCKET].revents | fds[POLL_BRIDGE_SOCKET].
-            revents ) & ( POLLERR | POLLHUP ) )
+    if ( ( fds[POLL_RESET_PIPE].revents | fds[POLL_NETWORK_SOCKET].
+            revents | fds[POLL_BRIDGE_SOCKET].revents ) & ( POLLERR | POLLHUP ) )
     {
         return -1;
     }
@@ -400,8 +398,8 @@ static int nettalk_forward_cycle ( struct nettalk_context_t *context, struct pol
     /* Reply with noop on idle */
     if ( ack->encrypted + 200 < get_millis (  ) )
     {
-        if ( send ( context->bridge.u.s.local, noop_chunk, sizeof ( noop_chunk ),
-                MSG_DONTWAIT ) < 0 )
+        if ( send_complete_with_reset ( context, context->bridge.u.s.local, noop_chunk,
+                sizeof ( noop_chunk ), NETTALK_SEND_TIMEOUT ) < 0 )
         {
             return -1;
         }
